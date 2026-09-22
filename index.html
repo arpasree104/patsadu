@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ระบบบันทึกความต้องการใช้พัสดุ</title>
+  <style>
+    :root{--brand:#0f766e;--brand2:#0d9488;--bg:#f4f7f8;--line:#d7dee3;--text:#1f2937;--muted:#6b7280;--danger:#b91c1c;--warn:#b45309;--ok:#047857;--card:#fff;--soft:#ecfdf5}
+    *{box-sizing:border-box} body{margin:0;font-family:"Sarabun","TH Sarabun New",Arial,sans-serif;background:var(--bg);color:var(--text);font-size:15px} button,input,select,textarea{font-family:inherit;font-size:14px}.hidden{display:none!important}
+    .loading{position:fixed;inset:0;background:rgba(255,255,255,.72);z-index:3000;display:flex;align-items:center;justify-content:center;gap:12px;font-weight:800}.spinner{width:24px;height:24px;border:3px solid #cbd5e1;border-top-color:var(--brand);border-radius:50%;animation:spin 1s linear infinite}@keyframes spin{to{transform:rotate(360deg)}}
+    .login-wrap{min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:linear-gradient(140deg,#e0f2f1,#f8fafc)}.login-card{width:100%;max-width:430px;background:white;border-radius:24px;padding:32px;box-shadow:0 20px 60px rgba(15,118,110,.18);border:1px solid #d8eeee}.logo-circle{width:72px;height:72px;border-radius:24px;background:var(--brand);color:white;display:flex;align-items:center;justify-content:center;font-size:30px;margin:0 auto 18px}.title{text-align:center;font-size:24px;font-weight:900}.subtitle{text-align:center;color:var(--muted);margin:8px 0 24px}
+    .topbar{height:66px;background:white;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;padding:0 20px;position:sticky;top:0;z-index:50}.brand{display:flex;align-items:center;gap:10px;font-size:20px;font-weight:900;color:var(--brand)}.brand-mark{width:38px;height:38px;border-radius:14px;background:var(--brand);color:white;display:flex;align-items:center;justify-content:center}.userbox{text-align:right}.userbox strong{display:block}.userbox span{font-size:12px;color:var(--muted)}
+    .layout{display:grid;grid-template-columns:260px 1fr;min-height:calc(100vh - 66px)}.sidebar{background:white;border-right:1px solid var(--line);padding:16px;position:sticky;top:66px;height:calc(100vh - 66px);overflow:auto}.navbtn{width:100%;border:0;background:transparent;border-radius:14px;padding:12px 14px;text-align:left;cursor:pointer;margin-bottom:6px;color:#334155}.navbtn:hover,.navbtn.active{background:#ccfbf1;color:#115e59;font-weight:800}.content{padding:20px;max-width:1500px;width:100%;margin:auto}
+    .toolbar{display:flex;justify-content:space-between;gap:12px;align-items:center;margin-bottom:14px;flex-wrap:wrap}.toolbar h2{margin:0;color:#0f172a}.card{background:white;border:1px solid var(--line);border-radius:18px;padding:18px;box-shadow:0 6px 22px rgba(15,23,42,.04);margin-bottom:16px}.section-title{font-size:18px;font-weight:900;margin-bottom:12px;color:#0f172a;display:flex;align-items:center;justify-content:space-between;gap:10px}.grid{display:grid;gap:12px}.grid-2{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-3{grid-template-columns:repeat(3,minmax(0,1fr))}.grid-4{grid-template-columns:repeat(4,minmax(0,1fr))}.field label{display:block;font-weight:800;margin-bottom:6px;color:#334155}.field input,.field select,.field textarea{width:100%;border:1px solid #cfd8dc;border-radius:12px;padding:10px 12px;background:#fff}.field textarea{min-height:84px;resize:vertical}.checkline{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin:6px 0}.checkline input[type=checkbox]{width:18px;height:18px}.muted{color:var(--muted)}.small{font-size:12px}.center{text-align:center}.right{text-align:right}.nowrap{white-space:nowrap}
+    .btn{border:0;border-radius:12px;padding:10px 14px;font-weight:800;cursor:pointer;display:inline-flex;gap:6px;align-items:center;justify-content:center;text-decoration:none}.btn-primary{background:var(--brand);color:white}.btn-soft{background:#e0f2f1;color:#115e59}.btn-ghost{background:#f1f5f9;color:#334155}.btn-danger{background:#fee2e2;color:#991b1b}.btn-warn{background:#fef3c7;color:#92400e}.btn-ok{background:#dcfce7;color:#166534}.btn-block{width:100%}.row-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}.btn:disabled{opacity:.45;cursor:not-allowed}
+    .alert{padding:10px 12px;border-radius:14px;margin:10px 0}.alert-ok{background:#dcfce7;color:#166534}.alert-danger{background:#fee2e2;color:#991b1b}.alert-info{background:#e0f2fe;color:#075985}.alert-warn{background:#fef3c7;color:#92400e}
+    .table-wrap{overflow:auto;border:1px solid var(--line);border-radius:14px}table{width:100%;border-collapse:collapse;background:white}th,td{padding:9px 10px;border-bottom:1px solid #e5e7eb;vertical-align:top}th{background:#f8fafc;color:#334155;text-align:left;font-weight:900}tr:hover td{background:#fcfffe}.items-table input{width:100%;border:1px solid #cfd8dc;border-radius:8px;padding:7px}.badge{display:inline-block;border-radius:999px;padding:4px 9px;font-weight:800;font-size:12px}.st-ร่าง{background:#f1f5f9;color:#334155}.st-ส่งให้พัสดุตรวจสอบ{background:#fef3c7;color:#92400e}.st-ผ่านการตรวจสอบ{background:#dcfce7;color:#166534}.st-ส่งกลับแก้ไข{background:#fee2e2;color:#991b1b}.st-ยกเลิก{background:#e5e7eb;color:#475569}
+    .kpi-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:14px}.kpi{background:white;border:1px solid var(--line);border-radius:18px;padding:18px}.kpi .label{color:var(--muted);font-weight:800}.kpi .value{font-size:34px;font-weight:900;color:#0f766e;margin-top:6px}.bar-row{display:grid;grid-template-columns:170px 1fr 90px;gap:10px;align-items:center;margin:8px 0}.bar{height:16px;background:#e2e8f0;border-radius:999px;overflow:hidden}.bar span{display:block;height:100%;background:#0f766e;border-radius:999px}.link-list a{display:block;margin:3px 0;color:#0f766e;text-decoration:underline}.file-note{font-size:12px;color:#64748b;margin-top:4px}.hr{height:1px;background:#e5e7eb;margin:14px 0}
+    .modal{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:1200;display:flex;align-items:flex-start;justify-content:center;padding:30px 12px;overflow:auto}.modal-card{width:100%;max-width:900px;background:white;border-radius:20px;padding:18px;box-shadow:0 20px 70px rgba(0,0,0,.25)}
+    .print-modal{position:fixed;inset:0;background:rgba(15,23,42,.55);z-index:1000;overflow:auto;padding:12px}.print-toolbar{max-width:210mm;margin:0 auto 10px;background:white;border-radius:16px;padding:10px 12px;display:flex;justify-content:space-between;gap:10px;align-items:center;flex-wrap:wrap}.print-page{width:210mm;min-height:297mm;background:white;margin:0 auto;padding:9mm 11mm 8mm 11mm;box-shadow:0 12px 50px rgba(0,0,0,.25);font-family:"TH Sarabun New","Sarabun",Arial,sans-serif;color:#000;font-size:15.5pt;line-height:1.05;overflow:visible}.print-page *{box-sizing:border-box}.garuda-wrap{height:15mm;display:flex;align-items:flex-start;justify-content:flex-start}.garuda-img{height:15mm;max-height:15mm;width:auto;display:block;object-fit:contain}.memo-title{text-align:center;font-size:28pt;font-weight:900;line-height:1;margin-top:-1mm}.dotline{border-bottom:1px dotted #111;display:inline-block;min-width:110px;padding:0 3px;height:18px;line-height:18px;vertical-align:baseline;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.memo-row{margin:2px 0}.bold{font-weight:900}.indent{text-indent:45px}.top-rule{border:0;border-top:1.2px solid #000;margin:4px 0 6px}.print-table{width:100%;border-collapse:collapse;margin:4px 0 3px;font-size:15.5pt;table-layout:fixed}.print-table th,.print-table td{border:1px solid #000;padding:2px 3px;color:#000;background:white;vertical-align:middle}.print-table th{text-align:center;font-weight:900;line-height:1.05}.print-table .right{text-align:right}.print-table .center{text-align:center}.sign-table{width:100%;border-collapse:collapse;margin-top:0px}.sign-table td{border:0!important;background:white!important;vertical-align:top;padding:0!important}.sign-table .sig-left{width:48%;padding-right:6mm!important}.sign-table .sig-right{width:52%;padding-left:5mm!important;text-align:left}.sign-center{text-align:center;margin-top:4px}.signature-img{max-width:120px;max-height:32px;display:block;margin:0 auto -4px auto}.approval{text-align:center;margin-top:2px;font-weight:900}.ppho-space{height:10mm}.print-small{font-size:15.5pt;line-height:1.04}.print-xs{font-size:14pt;line-height:1.02}.exec-report h1{font-size:26pt;text-align:center;margin:0 0 8px}.exec-report .kpi-print{display:grid;grid-template-columns:repeat(4,1fr);gap:6px;margin:8px 0}.exec-report .kpi-print div{border:1px solid #000;padding:5px;text-align:center}.exec-report .kpi-print b{display:block;font-size:22pt}
+    
+    /* A4 balanced fitting */
+    .print-page{min-height:297mm;padding:8.5mm 10.5mm 7mm 10.5mm;font-size:15.5pt;line-height:1.10;position:relative;--print-scale:1;letter-spacing:.01pt}
+    .print-fit-body{transform-origin:top left;width:100%;}
+    .garuda-wrap{height:12mm;margin-bottom:1mm}.garuda-img{height:12mm;max-height:12mm}.memo-title{font-size:26pt;line-height:1.05;margin-top:-3mm}.dotline{height:18px;line-height:18px;padding:0 3px}.memo-row{margin:2px 0}.top-rule{margin:4px 0 6px}.print-table{font-size:15.5pt;margin:4px 0 5px}.print-table th,.print-table td{padding:2px 2.8px;line-height:1.07}.print-table th{line-height:1.08}.sign-table{margin-top:2px}.sign-center{text-align:center;margin-top:6px;line-height:1.1}.signature-img{max-height:36px;margin:0 auto -2px auto}.print-small{font-size:15.5pt;line-height:1.05}.print-xs{font-size:14pt;line-height:1.03}.ppho-space{height:14mm}.approval{margin-top:2px}.sign-table .sig-left{padding-right:5mm!important}.sign-table .sig-right{padding-left:5mm!important}.sig-block{min-height:12mm;margin-bottom:1mm}.sig-block-lg{min-height:16mm;margin-bottom:1mm}
+    .print-page .bold{font-weight:900}.print-page td,.print-page th{word-break:normal}.print-page .indent{text-indent:40px}
+    .layout.sidebar-closed { grid-template-columns: 1fr; }
+    @media(max-width:900px){.layout{grid-template-columns:1fr}.sidebar{position:static;height:auto;display:flex;overflow-x:auto;white-space:nowrap;padding:10px;gap:8px;border-right:0;border-bottom:1px solid var(--line);margin:0}.navbtn{width:auto;margin-bottom:0;flex-shrink:0}.grid-2,.grid-3,.grid-4,.kpi-grid{grid-template-columns:1fr}.topbar{height:auto;padding:10px 14px;flex-wrap:wrap;gap:10px}.content{padding:10px}.print-page{width:210mm;transform-origin:top left}.print-modal{padding:8px}.items-table{min-width:700px}.items-table input{min-width:70px}.items-table .item-name{min-width:140px}}
+    @media print{@page{size:A4 portrait;margin:0}html,body{width:210mm!important;margin:0!important;padding:0!important;background:white!important;}body>*:not(#printModal){display:none!important}#printModal{display:block!important;position:absolute!important;inset:0!important;width:210mm!important;background:white!important;padding:0!important;margin:0!important;}#printArea{display:block!important;width:210mm!important;margin:0!important;padding:0!important;}.print-toolbar{display:none!important}.print-page{box-shadow:none!important;margin:0!important;width:210mm!important;min-height:297mm!important;padding:8.5mm 10.5mm 7mm 10.5mm!important;}.print-fit-body{width:100%!important;}}
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js"></script>
+  <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';</script>
+</head>
+<body>
+  <div id="loading" class="loading hidden"><span class="spinner"></span><span>กำลังประมวลผล...</span></div>
+
+  <section id="loginView" class="login-wrap">
+    <div class="login-card">
+      <div class="logo-circle">📦</div>
+      <div class="title">ระบบบันทึกความต้องการใช้พัสดุ</div>
+      <div class="subtitle">เข้าสู่ระบบด้วยบัญชีจากแผ่นงาน UserAccounts</div>
+      <div id="loginAlert"></div>
+      <div class="field"><label>ชื่อผู้ใช้</label><input id="loginUsername" type="text" autocomplete="username"></div>
+      <div class="field"><label>รหัสผ่าน</label><input id="loginPassword" type="password" autocomplete="current-password"></div>
+      <button class="btn btn-primary btn-block" onclick="login()">เข้าสู่ระบบ</button>
+      <button class="btn btn-ghost btn-block" style="margin-top:8px" onclick="bootApp()">กลับไปหน้า Dashboard ทั่วไป</button>
+      <div class="muted small center" style="margin-top:14px">หากเข้าสู่ระบบไม่ได้ กรุณาตรวจสอบ Username, Password และ IsActive</div>
+    </div>
+  </section>
+
+  <section id="appView" class="hidden">
+    <div class="topbar">
+      <div class="brand"><button class="btn btn-ghost" onclick="document.querySelector('.sidebar').classList.toggle('hidden'); document.querySelector('.layout').classList.toggle('sidebar-closed');" style="padding:4px 8px; margin-right:4px;">☰</button><span class="brand-mark">พ</span><span>ระบบบันทึกความต้องการใช้พัสดุ</span></div>
+      <div class="row-actions">
+        <div class="userbox"><strong id="currentUserName">-</strong><span id="currentUserMeta">-</span></div>
+        <button id="logoutBtnTop" class="btn btn-ghost" onclick="logout()">ออกจากระบบ</button>
+        <button id="loginBtnTop" class="btn btn-primary hidden" onclick="showLogin()">เข้าสู่ระบบ</button>
+      </div>
+    </div>
+    <div class="layout">
+      <aside class="sidebar">
+        <button id="navSummary" class="navbtn active" onclick="showPage('summary')">📊 Dashboard ผู้บริหาร</button>
+        <button id="navList" class="navbtn" onclick="showPage('list')">📋 รายการคำขอ</button>
+        <button id="navForm" class="navbtn" onclick="newRequest()">➕ บันทึกคำขอใหม่</button>
+        <button id="navSettings" class="navbtn hidden" onclick="showPage('settings')">⚙️ Setting ตัวเลือก</button>
+        <button id="navReload" class="navbtn" onclick="reloadData()">🔄 โหลดข้อมูลใหม่</button>
+      </aside>
+      <main class="content">
+        <div id="summaryPage">
+          <div class="toolbar"><div><h2>Dashboard สรุปภาพรวมการเสนอความต้องการใช้พัสดุ</h2><div class="muted">สำหรับผู้บริหารพิจารณาภาพรวมทั้งระบบ</div></div><button id="summaryPrintBtn" class="btn btn-primary" onclick="printExecutiveReport()">🖨️ พิมพ์รายงานเสนอผู้บริหาร</button></div>
+          <div class="kpi-grid" id="kpiGrid"></div>
+          <div class="grid grid-2">
+            <div class="card"><div class="section-title">สรุปตามสถานะ</div><div id="chartStatus"></div></div>
+            <div class="card"><div class="section-title">สรุปตามกลุ่มงาน</div><div id="chartDepartment"></div></div>
+          </div>
+          <div class="card"><div class="section-title">รายการที่รอเจ้าหน้าที่พัสดุตรวจสอบ</div><div class="table-wrap"><table><thead><tr><th>เลขคำขอ</th><th>วันที่</th><th>เรื่อง</th><th>ผู้ขอ/กลุ่มงาน</th><th class="right">วงเงิน</th><th>จัดการ</th></tr></thead><tbody id="pendingTbody"></tbody></table></div></div>
+        </div>
+
+        <div id="listPage" class="hidden">
+          <div class="toolbar"><div><h2>รายการคำขอความต้องการใช้พัสดุ</h2><div class="muted">ค้นหา แก้ไข ส่งพัสดุตรวจสอบ บันทึกความก้าวหน้า และพิมพ์รายงาน</div></div><button id="listPageNewBtn" class="btn btn-primary" onclick="newRequest()">+ สร้างคำขอใหม่</button></div>
+          <div class="card"><div class="grid grid-3"><div class="field"><label>ค้นหา</label><input id="searchKeyword" type="text" placeholder="เลขคำขอ / เรื่อง / ผู้ขอ / กลุ่มงาน" oninput="renderRequestTable()"></div><div class="field"><label>สถานะ</label><select id="searchStatus" onchange="renderRequestTable()"><option value="">ทั้งหมด</option><option>ร่าง</option><option>ส่งให้พัสดุตรวจสอบ</option><option>ผ่านการตรวจสอบ</option><option>ส่งกลับแก้ไข</option><option>ยกเลิก</option></select></div><div class="field"><label>&nbsp;</label><button class="btn btn-soft" onclick="reloadData()">โหลดข้อมูล</button></div></div></div>
+          <div class="card"><div class="section-title">รายการล่าสุด <span id="recordCount" class="muted"></span></div><div class="table-wrap"><table><thead><tr><th>เลขคำขอ</th><th>วันที่</th><th>เรื่อง</th><th>ผู้ขอ/กลุ่มงาน</th><th class="right">จำนวนเงิน</th><th>สถานะ</th><th>จัดการ</th></tr></thead><tbody id="requestTbody"></tbody></table></div></div>
+        </div>
+
+        <div id="formPage" class="hidden">
+          <div class="toolbar"><div><h2 id="formTitle">บันทึกคำขอใหม่</h2><div class="muted" id="formSubtitle">กรอกข้อมูลตามแบบขอความเห็นชอบซื้อ/จ้าง</div></div><div class="row-actions"><button class="btn btn-ghost" onclick="showPage('list')">กลับรายการ</button><button id="submitBtnTop" class="btn btn-warn hidden" onclick="submitCurrentRequest()">ส่งให้พัสดุตรวจสอบ</button><button id="checkBtnTop" class="btn btn-ok hidden" onclick="checkCurrentRequest()">ผ่านการตรวจสอบ</button><button id="printBtnTop" class="btn btn-soft hidden" onclick="printCurrentRequest()">พิมพ์รายงาน</button><button id="createPdfBtnTop" class="btn btn-primary hidden" onclick="initPdfCreation()">📄 สร้าง/จัดการ PDF</button></div></div>
+          <div id="formAlert"></div>
+          <div class="card"><div class="section-title">สถานะคำขอ</div><div id="statusPanel" class="muted">คำขอใหม่จะเริ่มจากสถานะ “ร่าง”</div></div>
+
+          <div class="card">
+            <div class="section-title">1) ข้อมูลหนังสือ</div>
+            <div class="grid grid-4"><div class="field"><label>ส่วนราชการ/กลุ่มงาน</label><input id="department" type="text"></div><div class="field"><label>โทร.</label><input id="phone" type="text" inputmode="tel" placeholder="เช่น 037xxxxxx หรือ 08xxxxxxxx"></div><div class="field"><label>ที่</label><input id="docNoText" type="text" placeholder="นย ..."></div><div class="field"><label>วันที่</label><input id="requestDate" type="date"></div></div>
+            <div class="grid grid-2"><div class="field"><label>เรียน</label><input id="to" type="text" value="นายแพทย์สาธารณสุขจังหวัดนครนายก"></div><div class="field"><label>ประเภท</label><select id="purchaseType"><option value="ซื้อ">ซื้อ</option><option value="จ้าง">จ้าง</option><option value="ซื้อ/จ้าง">ซื้อ/จ้าง</option></select></div></div>
+            <div class="field"><label>เรื่อง / ขอความเห็นชอบซื้อหรือจ้าง</label><input id="subject" type="text" placeholder="เช่น วัสดุสำนักงาน / จ้างเหมาบริการ..."></div>
+            <div class="field"><label>เหตุผลและความจำเป็น</label><textarea id="reason" placeholder="ระบุเหตุผลและความจำเป็นในการจัดซื้อ/จัดจ้าง"></textarea></div>
+            <div class="grid grid-3"><label class="checkline"><input id="purposeRegular" type="checkbox"> ใช้ในงานประจำ</label><label class="checkline"><input id="purposeStock" type="checkbox"> สำรองคลัง</label><label class="checkline"><input id="purposeProject" type="checkbox"> ใช้ในโครงการ</label></div>
+            <div class="field"><label>ชื่อโครงการ กรณีใช้ในโครงการ</label><input id="projectName" type="text"></div>
+          </div>
+
+          <div class="card"><div class="section-title">2) รายละเอียดรายการพัสดุ <button class="btn btn-soft" onclick="addItemRow()">+ เพิ่มรายการ</button></div><datalist id="itemNameList"></datalist><datalist id="unitList"></datalist><div class="table-wrap"><table class="items-table"><thead><tr><th style="width:48px">ลำดับ</th><th>รายการ</th><th>คงเหลือตามแผน</th><th>จำนวน</th><th>หน่วยนับ</th><th>ราคา/หน่วย</th><th>ราคารวม</th><th>ราคาซื้อหลังสุด</th><th></th></tr></thead><tbody id="itemsTbody"></tbody><tfoot><tr><th colspan="6" class="right">ราคารวม</th><th id="itemsTotal" class="right">0.00</th><th colspan="2"></th></tr></tfoot></table></div></div>
+
+          <div class="card">
+            <div class="section-title">3) เอกสารแนบและคณะกรรมการตรวจรับ</div>
+            <div class="grid grid-3">
+              <div><label class="checkline"><input id="attachmentSpec" type="checkbox"> รายละเอียดคุณลักษณะเฉพาะ/ร่างขอบเขตงาน</label><div class="field"><input id="attachmentSpecSheets" type="number" min="0" value="0" placeholder="จำนวนแผ่น"></div><input id="specFiles" type="file" multiple><div id="specLinks" class="link-list file-note"></div></div>
+              <div><label class="checkline"><input id="attachmentQuote" type="checkbox"> ใบเสนอราคา</label><div class="field"><input id="attachmentQuoteSheets" type="number" min="0" value="0" placeholder="จำนวนแผ่น"></div><input id="quoteFiles" type="file" multiple><div id="quoteLinks" class="link-list file-note"></div></div>
+              <div><label class="checkline"><input id="attachmentProject" type="checkbox"> โครงการ</label><div class="field"><input id="attachmentProjectSheets" type="number" min="0" value="0" placeholder="จำนวนแผ่น"></div><input id="projectFiles" type="file" multiple><div id="projectLinks" class="link-list file-note"></div></div>
+            </div>
+            <div class="hr"></div><datalist id="userList"></datalist><div class="table-wrap"><table><thead><tr><th>ลำดับ</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>เลขบัตรประชาชน</th><th>E-mail</th><th></th></tr></thead><tbody id="inspectorsTbody"></tbody></table></div><button class="btn btn-soft" style="margin-top:10px" onclick="addInspectorRow()">+ เพิ่มกรรมการ/ผู้ตรวจรับ</button>
+          </div>
+
+          <div class="card"><div class="section-title">4) ความเห็นเจ้าหน้าที่/หัวหน้าเจ้าหน้าที่ และงานแผน</div><datalist id="budgetSourceList"></datalist><div class="grid grid-2"><div><label class="checkline"><input id="officerOpinionAnnualUnder100k" type="checkbox"> เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี ไม่เกิน 1 แสนบาท</label><label class="checkline"><input id="officerOpinionAnnualOver100k" type="checkbox"> เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี เกิน 1 แสนบาท</label><div class="field"><label>เห็นควรจัดซื้อ/จ้างโดยวิธี</label><select id="officerMethod"><option>เฉพาะเจาะจง</option><option>คัดเลือก</option><option>ตลาดอิเล็กทรอนิกส์ (e-market)</option><option>ประกวดราคาอิเล็กทรอนิกส์ (e-bidding)</option></select></div><label class="checkline"><input id="officerMethodInProgress" type="checkbox"> เฉพาะเจาะจงก่อน เนื่องจากอยู่ระหว่างดำเนินการจัดซื้อ/จ้าง</label><div class="grid grid-2"><div class="field"><label>วิธีที่อยู่ระหว่างดำเนินการ</label><select id="officerInProgressMethod"><option value=""></option><option>e-market</option><option>e-bidding</option></select></div><div class="field"><label>กำหนดแล้วเสร็จประมาณ (วัน)</label><input id="completionDays" type="number" min="0" value="0"></div></div><div class="field"><label>เหตุผลประกอบความเห็น</label><textarea id="officerReason">เนื่องจากมีความจำเป็นต้องใช้ในงานราชการของ สสจ.นครนายก</textarea></div></div><div><div class="grid grid-2"><div class="field"><label>เจ้าหน้าที่พัสดุ</label><input id="officerName" list="officerNameList" type="text"></div><div class="field"><label>ตำแหน่ง</label><input id="officerPosition" type="text" value="เจ้าหน้าที่"></div><div class="field"><label>หัวหน้าเจ้าหน้าที่</label><input id="deptHeadName" list="deptHeadNameList" type="text"></div><div class="field"><label>ตำแหน่ง</label><input id="deptHeadPosition" type="text" value="หัวหน้าเจ้าหน้าที่"></div></div><label class="checkline"><input id="planInPlan" type="checkbox"> อยู่ในแผนปี พ.ศ.</label><div class="grid grid-2"><div class="field"><label>ปี พ.ศ.</label><input id="planYear" type="number" min="2500"></div><div class="field"><label>จัดซื้อด้วยเงิน</label><input id="planBudgetSource" list="budgetSourceList" type="text"></div></div><div class="field"><label>อื่นๆ/หมายเหตุงานแผน</label><input id="planOther" type="text"></div><div class="field"><label>จำนวนเงินตามแผน</label><input id="planAmount" type="number" min="0" step="0.01"></div><div class="field"><label>หมายเหตุ</label><textarea id="planRemark"></textarea></div></div></div></div>
+
+          <div class="card"><div class="section-title">5) ผู้เห็นชอบและหมายเหตุ</div><div class="grid grid-2"><div class="field"><label>ชื่อ-สกุล นพ.สสจ.</label><input id="approverName" type="text"></div><div class="field"><label>ตำแหน่ง</label><input id="approverPosition" type="text" value="นายแพทย์สาธารณสุขจังหวัดนครนายก"></div></div><div class="field"><label>หมายเหตุเพิ่มเติม</label><textarea id="notes"></textarea></div><div class="row-actions"><button class="btn btn-primary" onclick="saveCurrentRequest()">💾 บันทึกร่าง</button><button id="submitBtnBottom" class="btn btn-warn hidden" onclick="submitCurrentRequest()">📨 ลงนามและส่งต่อ</button><button id="progressBtnBottom" class="btn btn-soft hidden" onclick="openProgress(CURRENT_REQUEST_ID)">📝 บันทึกความก้าวหน้า</button><button id="printBtnBottom" class="btn btn-soft hidden" onclick="printCurrentRequest()">🖨️ พิมพ์รายงาน</button><button id="createPdfBtnBottom" class="btn btn-primary hidden" onclick="initPdfCreation()">📄 สร้าง/จัดการ PDF</button><button class="btn btn-ghost" onclick="clearForm()">ล้างฟอร์ม</button></div></div>
+        </div>
+
+        <div id="settingsPage" class="hidden">
+          <div class="toolbar"><div><h2>Setting ตัวเลือกสำหรับระบบพัสดุ</h2><div class="muted">เจ้าหน้าที่พัสดุสามารถเพิ่มตัวเลือก แล้วระบบจะนำไปใช้ในฟอร์ม</div></div></div>
+          <div class="card"><div class="grid grid-4"><div class="field"><label>ประเภท</label><select id="setCategory"><option>ItemName</option><option>Unit</option><option>BudgetSource</option><option>ProgressStatus</option><option>Default</option></select></div><div class="field"><label>ชื่อที่แสดง</label><input id="setLabel" type="text"></div><div class="field"><label>ค่า</label><input id="setValue" type="text"></div><div class="field"><label>&nbsp;</label><button class="btn btn-primary" onclick="saveSetting()">เพิ่มตัวเลือก</button></div></div></div>
+          <div class="card"><div class="section-title">รายการตัวเลือกปัจจุบัน</div><div class="table-wrap"><table><thead><tr><th>ประเภท</th><th>ชื่อที่แสดง</th><th>ค่า</th></tr></thead><tbody id="settingsTbody"></tbody></table></div><div class="file-note">สามารถแก้ไข/ปิดใช้งานรายการเดิมโดยตรงได้ที่แผ่นงาน setting</div></div>
+        </div>
+      </main>
+    </div>
+  </section>
+
+  <div id="progressModal" class="modal hidden"><div class="modal-card"><div class="toolbar"><div><h2>บันทึกความก้าวหน้า</h2><div class="muted" id="progressTitle">-</div></div><button class="btn btn-ghost" onclick="closeProgress()">ปิด</button></div><datalist id="progressStatusList"></datalist><div class="grid grid-2"><div class="field"><label>ขั้นตอน/สถานะความก้าวหน้า</label><input id="progressStatus" list="progressStatusList" type="text" placeholder="เช่น เสนอผู้บริหารแล้ว"></div><div class="field"><label>ไฟล์แนบความก้าวหน้า แนบได้หลายไฟล์</label><input id="progressFiles" type="file" multiple></div></div><div class="field"><label>หมายเหตุ</label><textarea id="progressNote" placeholder="ระบุรายละเอียดความก้าวหน้า"></textarea></div><div class="row-actions"><button class="btn btn-primary" onclick="saveProgress()">บันทึกความก้าวหน้า</button></div><div class="hr"></div><div class="section-title">ประวัติความก้าวหน้า</div><div id="progressHistory"></div></div></div>
+  <div id="forwardModal" class="modal hidden"><div class="modal-card"><div class="toolbar"><div><h2>ลงนามและส่งต่อเอกสาร</h2><div class="muted" id="forwardRequestNo">-</div></div><button class="btn btn-ghost" onclick="closeForward()">ปิด</button></div><div class="alert alert-info">กรุณาเลือกผู้รับเรื่องต่อ และสถานะที่ต้องการเปลี่ยน</div><div id="forwardSignerInfo" class="alert alert-ok" style="font-weight:800;"></div><div class="grid grid-2"><div class="field"><label>สถานะต่อไป</label><select id="forwardNextStatus"><option value="ส่งให้พัสดุตรวจสอบ">ส่งให้พัสดุตรวจสอบ</option><option value="ผ่านการตรวจสอบ">ผ่านการตรวจสอบ</option><option value="ส่งกลับแก้ไข">ส่งกลับแก้ไข</option></select></div><div class="field"><label>ส่งเรื่องไปให้ใครพิจารณาต่อ?</label><input id="forwardToUser" list="forwardUserList" type="text" placeholder="พิมพ์ค้นหาชื่อ..."></div></div><div class="field"><label>บทบาทของคุณในการลงนามครั้งนี้</label><select id="forwardSignerRole"><option value="ผู้ขอใช้">ผู้ขอใช้</option><option value="หัวหน้ากลุ่มงาน">หัวหน้ากลุ่มงาน</option><option value="เจ้าหน้าที่พัสดุ">เจ้าหน้าที่พัสดุ</option><option value="หัวหน้าเจ้าหน้าที่">หัวหน้าเจ้าหน้าที่</option><option value="หัวหน้ากลุ่มงานบริหารทั่วไป">หัวหน้ากลุ่มงานบริหารทั่วไป</option><option value="รอง นพ.สสจ.">รอง นพ.สสจ.</option><option value="นพ.สสจ.">นพ.สสจ.</option></select></div><div class="field"><label>ลายมือชื่อ (กรุณาเซ็นชื่อในกรอบด้านล่าง หากยังไม่มีลายเซ็นในระบบ)</label><div style="border:1px solid #cfd8dc; border-radius:12px; background:#f8fafc; overflow:hidden;"><canvas id="signatureCanvas" width="800" height="200" style="width:100%; height:160px; touch-action:none; cursor:crosshair;"></canvas></div><div style="text-align:right; margin-top:4px;"><button class="btn btn-soft" style="padding:4px 8px; font-size:12px;" onclick="clearSignature()">ล้างลายเซ็น</button></div></div><div id="signingGuide" class="card" style="margin-top:10px;background:#f0fdf4;"><div class="section-title" style="font-size:15px;">📝 ลำดับการลงนาม (แนะนำ)</div><div style="font-size:13px;line-height:1.8;">1️⃣ ผู้ขอใช้ → 2️⃣ หัวหน้ากลุ่มงาน → 3️⃣ เจ้าหน้าที่พัสดุ → 4️⃣ หัวหน้าเจ้าหน้าที่ → 5️⃣ หน.กลุ่มงานบริหารทั่วไป → 6️⃣ รอง นพ.สสจ. → 7️⃣ นพ.สสจ.</div></div><div class="field"><label>ข้อความ / หมายเหตุ (ถ้ามี)</label><textarea id="forwardNote" placeholder="ระบุข้อความเพิ่มเติมเพื่อบันทึกในประวัติความก้าวหน้า"></textarea></div><div class="row-actions"><button class="btn btn-primary btn-block" style="padding:12px;font-size:16px;" onclick="confirmForward()">ยืนยันการลงนามและส่งต่อ</button></div></div></div><datalist id="forwardUserList"></datalist>
+  <div id="signModal" class="print-modal hidden"><div class="print-toolbar" style="background:#1e293b; color:white; margin-bottom: 5px;"><strong>ระบบลงนามและส่งต่อเอกสาร</strong><div class="row-actions"><button class="btn btn-primary" onclick="confirmSignAndForward()">ยืนยันการลงนามและส่งต่อ</button><button class="btn btn-ghost" style="color:#cbd5e1" onclick="closeSign()">ยกเลิก</button></div></div><div class="alert alert-info" style="max-width:210mm; margin:0 auto 10px; text-align:center;">ตรวจสอบความถูกต้องของเอกสารด้านล่าง หากถูกต้องแล้วให้กดปุ่ม <b>"ยืนยันการลงนามและส่งต่อ"</b></div><div id="signArea"></div></div>
+
+  <div id="pdfEditorModal" class="print-modal hidden" style="z-index: 2000; padding: 0; background:rgba(0,0,0,0.8);">
+    <div class="print-toolbar" style="background:#1e293b; color:white; margin:0; max-width:100%; border-radius:0; position:sticky; top:0; z-index:2010; display:flex; flex-wrap:wrap; padding: 8px 16px;">
+      <div style="display:flex; gap:6px; flex-wrap:wrap; align-items:center;">
+        <button class="btn btn-soft" style="padding:4px 10px;" onclick="addPdfItem('garuda')">🦅 ครุฑ</button>
+        <button class="btn btn-primary" style="padding:4px 10px;" onclick="addPdfItem('sig1')">✍️ ลายเซ็น</button>
+        <button class="btn btn-soft" style="padding:4px 10px;" onclick="addPdfItem('name_pos')">👤 ชื่อ+ตำแหน่ง</button>
+        <button class="btn btn-soft" style="padding:4px 10px;" onclick="addPdfItem('date')">📅 วันที่</button>
+        <button class="btn btn-soft" style="padding:4px 10px;" onclick="addPdfItem('check')">✔️ กาถูก</button>
+        <button class="btn btn-soft" style="padding:4px 10px;" onclick="addPdfItem('text')">📝 ข้อความ</button>
+        <button class="btn btn-danger" style="padding:4px 10px;" onclick="deleteSelectedPdfItem()">🗑️ ลบ</button>
+      </div>
+      <div class="row-actions" style="margin-left:auto;">
+        <button class="btn btn-ok" onclick="savePdfAndForward()">💾 บันทึก & ส่งต่อ</button>
+        <button class="btn btn-ghost" style="color:#cbd5e1" onclick="closePdfEditor()">X ยกเลิก</button>
+      </div>
+    </div>
+    <div style="background:#475569; padding: 20px; min-height: calc(100vh - 56px); overflow:auto; text-align:center;" id="pdfEditorContainer">
+       <div id="pdfCanvasWrapper" style="position:relative; display:inline-block; background:white; box-shadow:0 10px 25px rgba(0,0,0,0.5);">
+         <canvas id="pdfEditorCanvas"></canvas>
+         <div id="pdfItemsLayer" style="position:absolute; inset:0; pointer-events:none; overflow:hidden;"></div>
+       </div>
+    </div>
+  </div>
+  <div id="printModal" class="print-modal hidden"><div class="print-toolbar"><strong>ตัวอย่างก่อนพิมพ์</strong><div class="row-actions"><button class="btn btn-primary" onclick="printA4()">พิมพ์ / บันทึกเป็น PDF</button><button class="btn btn-soft" onclick="downloadWord()">บันทึกเป็น Word</button><button class="btn btn-ghost" onclick="closePrint()">ปิด</button></div></div><div id="printArea"></div></div>
+
+  <script>
+    /* Force Google Apps Script to generate client-side stubs for dynamic calling */
+    if (false) {
+      google.script.run.login();
+      google.script.run.getPublicDashboardData();
+      google.script.run.getInitialData();
+      google.script.run.getRequest();
+      google.script.run.saveRequest();
+      google.script.run.forwardRequest();
+      google.script.run.supplyCheckPassed();
+      google.script.run.supplyReturnRequest();
+      google.script.run.addProgressUpdate();
+      google.script.run.saveSetting();
+    }
+    const STORAGE_KEY='supply_session_v3';
+    const GARUDA_URL='https://img1.pic.in.th/images/310f1c8dc44d07e2888f3e0c3f416701.png';
+    const STATUS={DRAFT:'ร่าง',SUBMITTED:'ส่งให้พัสดุตรวจสอบ',CHECKED:'ผ่านการตรวจสอบ',RETURNED:'ส่งกลับแก้ไข',CANCELLED:'ยกเลิก'};
+    const SIGNER_ROLES=['ผู้ขอใช้','หัวหน้ากลุ่มงาน','เจ้าหน้าที่พัสดุ','หัวหน้าเจ้าหน้าที่','หัวหน้ากลุ่มงานบริหารทั่วไป','รอง นพ.สสจ.','นพ.สสจ.'];
+    let SESSION=null, DATA={user:null,users:[],requests:[],settings:{},dashboard:null}, CURRENT_REQUEST_ID='', CURRENT_DETAIL=null, PROGRESS_REQUEST_ID='';
+    let DATA_CACHE={}; /* client-side cache for request details */
+    function $(id){return document.getElementById(id)}
+    function showLoading(flag){$('loading').classList.toggle('hidden', !flag)}
+    function alertBox(target, message, type='ok'){ $(target).innerHTML = message ? `<div class="alert alert-${type}">${escapeHtml(message)}</div>` : ''; }
+    function gasCall(fn,...args){showLoading(true);return new Promise((resolve,reject)=>{google.script.run.withSuccessHandler(res=>{showLoading(false);resolve(res)}).withFailureHandler(err=>{showLoading(false);reject(err)} )[fn](...args);});}
+    function showLogin(){ $('loginView').classList.remove('hidden'); $('appView').classList.add('hidden'); }
+    function showApp(){ $('loginView').classList.add('hidden'); $('appView').classList.remove('hidden'); }
+    async function login(){try{alertBox('loginAlert','');const res=await gasCall('login',$('loginUsername').value,$('loginPassword').value);SESSION={userId:res.user.userId,username:res.user.username};localStorage.setItem(STORAGE_KEY,JSON.stringify(SESSION));if(res.initialData){DATA=res.initialData;showApp();$('currentUserName').textContent=DATA.user.fullName||DATA.user.username;$('currentUserMeta').textContent=[DATA.user.position,DATA.user.department,DATA.user.role].filter(Boolean).join(' / ');$('navSettings').classList.toggle('hidden',!DATA.user.isSupply);$('navForm').classList.remove('hidden');$('logoutBtnTop').classList.remove('hidden');$('loginBtnTop').classList.add('hidden');if($('summaryPrintBtn'))$('summaryPrintBtn').classList.remove('hidden');if($('listPageNewBtn'))$('listPageNewBtn').classList.remove('hidden');if($('navReload'))$('navReload').classList.remove('hidden');fillDatalists();renderAll();}else{await bootApp();}}catch(err){alertBox('loginAlert',err.message||err,'danger')}}
+    function logout(){localStorage.removeItem(STORAGE_KEY);SESSION=null;bootApp();}
+    async function bootApp() {
+      try {
+        if (!SESSION) {
+          const saved = localStorage.getItem(STORAGE_KEY);
+          if (saved) {
+            try { SESSION = JSON.parse(saved); } catch(e){}
+          }
+        }
+        if (!SESSION) {
+          const res = await gasCall('getPublicDashboardData');
+          DATA = res || { dashboard: {}, requests: [] };
+          if ($('currentUserName')) $('currentUserName').textContent = 'บุคคลทั่วไป';
+          if ($('currentUserMeta')) $('currentUserMeta').textContent = 'กรุณาเข้าสู่ระบบเพื่อจัดการข้อมูล';
+          if ($('navSettings')) $('navSettings').classList.add('hidden');
+          if ($('navForm')) $('navForm').classList.add('hidden');
+          if ($('logoutBtnTop')) $('logoutBtnTop').classList.add('hidden');
+          if ($('loginBtnTop')) $('loginBtnTop').classList.remove('hidden');
+          if ($('summaryPrintBtn')) $('summaryPrintBtn').classList.add('hidden');
+          if ($('listPageNewBtn')) $('listPageNewBtn').classList.add('hidden');
+          if ($('navReload')) $('navReload').classList.add('hidden');
+          showApp();
+          showPage('summary');
+          renderSummary();
+          renderRequestTable();
+          return;
+        }
+        const res = await gasCall('getInitialData', SESSION);
+        DATA = res || { user: {}, users: [], settings: {}, requests: [], dashboard: {} };
+        showApp();
+        if ($('currentUserName')) $('currentUserName').textContent = DATA.user.fullName || DATA.user.username || '';
+        if ($('currentUserMeta')) $('currentUserMeta').textContent = [DATA.user.position, DATA.user.department, DATA.user.role].filter(Boolean).join(' / ');
+        if ($('navSettings')) $('navSettings').classList.toggle('hidden', !DATA.user.isSupply);
+        if ($('navForm')) $('navForm').classList.remove('hidden');
+        if ($('logoutBtnTop')) $('logoutBtnTop').classList.remove('hidden');
+        if ($('loginBtnTop')) $('loginBtnTop').classList.add('hidden');
+        if ($('summaryPrintBtn')) $('summaryPrintBtn').classList.remove('hidden');
+        if ($('listPageNewBtn')) $('listPageNewBtn').classList.remove('hidden');
+        if ($('navReload')) $('navReload').classList.remove('hidden');
+        fillDatalists();
+        renderAll();
+      } catch (err) {
+        console.log(err);
+        if (SESSION) {
+          localStorage.removeItem(STORAGE_KEY);
+          SESSION = null;
+          bootApp();
+        } else {
+          showLogin();
+          alertBox('loginAlert', 'เกิดข้อผิดพลาด: ' + (err.message || err), 'danger');
+        }
+      }
+    }
+    async function reloadData(){try{if(!SESSION){const res=await gasCall('getPublicDashboardData');DATA=res;renderSummary();renderRequestTable();return;}const res=await gasCall('getInitialData',SESSION);DATA=res;fillDatalists();renderAll();}catch(err){alert(err.message||err)}}
+    function renderAll(){renderSummary();renderRequestTable();renderSettings();}
+    function fillDatalists(){const users=DATA.users||[];$('userList').innerHTML=users.map(u=>`<option value="${escapeAttr(u.fullName)}">${escapeHtml(u.position||'')} ${escapeHtml(u.department||'')}</option>`).join('');const s=DATA.settings||{};$('itemNameList').innerHTML=(s.itemNames||[]).map(v=>`<option value="${escapeAttr(v)}"></option>`).join('');$('unitList').innerHTML=(s.units||[]).map(v=>`<option value="${escapeAttr(v)}"></option>`).join('');$('budgetSourceList').innerHTML=(s.budgetSources||[]).map(v=>`<option value="${escapeAttr(v)}"></option>`).join('');$('progressStatusList').innerHTML=(s.progressStatuses||[]).map(v=>`<option value="${escapeAttr(v)}"></option>`).join('');}
+    function showPage(page){['summary','list','form','settings'].forEach(p=>{$(p+'Page').classList.toggle('hidden',p!==page);const n=$('nav'+(p==='list'?'List':p==='form'?'Form':p==='settings'?'Settings':'Summary')); if(n) n.classList.toggle('active',p===page);});}
+    function renderSummary(){const d=DATA.dashboard||{};$('kpiGrid').innerHTML=[['คำขอทั้งหมด',d.total||0],['วงเงินรวม',money(d.totalAmount||0)],['ผ่านตรวจสอบแล้ว',d.checked||0],['รอตรวจสอบ',d.pending||0]].map(x=>`<div class="kpi"><div class="label">${x[0]}</div><div class="value">${x[1]}</div></div>`).join('');renderBarChart('chartStatus',d.byStatus||[],'status');renderBarChart('chartDepartment',(d.byDepartment||[]).slice(0,12),'department');const pending=(DATA.requests||[]).filter(r=>r.status===STATUS.SUBMITTED);$('pendingTbody').innerHTML=pending.length?pending.map(r=>`<tr><td>${escapeHtml(r.requestNo)}</td><td>${formatThaiDate(r.requestDate)}</td><td>${escapeHtml(r.subject)}</td><td>${escapeHtml(r.requester)}<br><span class="muted small">${escapeHtml(r.department)}</span></td><td class="right">${money(r.totalAmount)}</td><td>${SESSION?`<button class="btn btn-soft" onclick="openRequest('${escapeAttr(r.requestId)}')">เปิด</button>`:'<span class="muted small">ต้องเข้าสู่ระบบ</span>'}</td></tr>`).join(''):'<tr><td colspan="6" class="center muted">ไม่มีรายการรอตรวจสอบ</td></tr>';}
+    function renderBarChart(id, rows, type){if(!rows.length){$(id).innerHTML='<div class="muted center">ไม่มีข้อมูล</div>';return;}const max=Math.max(...rows.map(r=>r.count),1);$(id).innerHTML=rows.map(r=>`<div class="bar-row" style="cursor:pointer" title="คลิกเพื่อกรองข้อมูล" onclick="filterFromChart('${type}', '${escapeAttr(r.label)}')"><div class="nowrap">${escapeHtml(r.label)}</div><div class="bar"><span style="width:${Math.max(4,r.count/max*100)}%"></span></div><div class="right">${number(r.count)} เรื่อง</div></div>`).join('');}
+    function renderRequestTable(){const key=($('searchKeyword')?.value||'').toLowerCase(), st=$('searchStatus')?.value||'';let rows=(DATA.requests||[]).filter(r=>{const joined=[r.requestNo,r.subject,r.requester,r.department,r.status].join(' ').toLowerCase();return(!key||joined.includes(key))&&(!st||r.status===st)});$('recordCount').textContent=`(${rows.length} รายการ)`;$('requestTbody').innerHTML=rows.length?rows.map(r=>`<tr><td>${escapeHtml(r.requestNo)}</td><td>${formatThaiDate(r.requestDate)}</td><td>${escapeHtml(r.subject)}</td><td>${escapeHtml(r.requester)}<br><span class="muted small">${escapeHtml(r.department)}</span></td><td class="right">${money(r.totalAmount)}</td><td>${statusBadge(r.status)}</td><td>${actionButtons(r)}</td></tr>`).join(''):'<tr><td colspan="7" class="center muted">ไม่พบข้อมูล</td></tr>';}
+    function actionButtons(r){if(!SESSION)return '<span class="muted small">ต้องเข้าสู่ระบบ</span>';let html=`<div class="row-actions"><button class="btn btn-soft" onclick="openRequest('${escapeAttr(r.requestId)}')">เปิด</button><button class="btn btn-ghost" onclick="openProgress('${escapeAttr(r.requestId)}')">ความก้าวหน้า</button>`;if(r.status!==STATUS.CANCELLED) html+=`<button class="btn btn-warn" onclick="openSignModal('${escapeAttr(r.requestId)}','FORWARD')">ลงนาม/ส่งต่อ</button>`;if(r.status===STATUS.CHECKED) html+=`<button class="btn btn-primary" onclick="printRequest('${escapeAttr(r.requestId)}')">พิมพ์</button>`;html+='</div>';return html;}
+    function filterFromChart(type, value) {showPage('list');$('searchStatus').value='';$('searchKeyword').value='';if(type==='status'){$('searchStatus').value=value;}else if(type==='department'){$('searchKeyword').value=value;}renderRequestTable();}
+    function statusBadge(st){return `<span class="badge st-${escapeAttr(st)}">${escapeHtml(st||'-')}</span>`}
+    function setDefaultFormByUser(){const u=DATA.user||{}, def=(DATA.settings&&DATA.settings.defaults)||{};$('department').value=u.department||def['ชื่อหน่วยงาน']||'';$('phone').value=u.phone||'';$('docNoText').value='นย';$('requestDate').value=todayISO();$('to').value=def['ชื่อผู้รับเรื่อง']||'นายแพทย์สาธารณสุขจังหวัดนครนายก';$('officerName').value=def['ชื่อเจ้าหน้าที่พัสดุ']||'';$('officerPosition').value=def['ตำแหน่งเจ้าหน้าที่พัสดุ']||'เจ้าหน้าที่';$('deptHeadName').value=def['ชื่อหัวหน้าเจ้าหน้าที่']||'';$('deptHeadPosition').value=def['ตำแหน่งหัวหน้าเจ้าหน้าที่']||'หัวหน้าเจ้าหน้าที่';$('approverName').value=def['ชื่อนายแพทย์สาธารณสุขจังหวัดนครนายก']||'';$('approverPosition').value='นายแพทย์สาธารณสุขจังหวัดนครนายก';$('planYear').value=new Date().getFullYear()+543;}
+    function newRequest(){clearForm();showPage('form');}
+    function clearForm(){CURRENT_REQUEST_ID='';CURRENT_DETAIL=null;['subject','reason','projectName','notes','planOther','planBudgetSource','planRemark','approverName'].forEach(id=>$(id).value='');['purposeRegular','purposeStock','purposeProject','attachmentSpec','attachmentQuote','attachmentProject','officerOpinionAnnualUnder100k','officerOpinionAnnualOver100k','officerMethodInProgress','planInPlan'].forEach(id=>$(id).checked=false);['attachmentSpecSheets','attachmentQuoteSheets','attachmentProjectSheets','completionDays','planAmount'].forEach(id=>$(id).value=0);$('officerReason').value='เนื่องจากมีความจำเป็นต้องใช้ในงานราชการของ สสจ.นครนายก';$('itemsTbody').innerHTML='';$('inspectorsTbody').innerHTML='';['specFiles','quoteFiles','projectFiles'].forEach(id=>$(id).value='');['specLinks','quoteLinks','projectLinks'].forEach(id=>$(id).innerHTML='');setDefaultFormByUser();addItemRow();addInspectorRow();updateActionVisibility();$('formTitle').textContent='บันทึกคำขอใหม่';$('formSubtitle').textContent='สถานะ: ร่าง';$('statusPanel').innerHTML='คำขอใหม่จะเริ่มจากสถานะ “ร่าง”';alertBox('formAlert','');}
+    async function openRequest(id){
+      try{
+        /* use cache first for instant display */
+        if(DATA_CACHE[id]){
+          CURRENT_REQUEST_ID=id; CURRENT_DETAIL=DATA_CACHE[id];
+          fillForm(DATA_CACHE[id].request,DATA_CACHE[id].items,DATA_CACHE[id].inspectors);
+          showPage('form');
+        }
+        /* always fetch fresh data (background refresh if cache hit) */
+        const res=await gasCall('getRequest',SESSION,id);
+        DATA_CACHE[id]=res;
+        CURRENT_REQUEST_ID=id; CURRENT_DETAIL=res;
+        fillForm(res.request,res.items,res.inspectors);
+        if(!DATA_CACHE[id]) showPage('form');
+      }catch(err){alert(err.message||err)}
+    }
+    function fillForm(r,items,inspectors){$('formTitle').textContent=`คำขอ ${r.RequestNo||''}`;$('formSubtitle').innerHTML=`สถานะ: ${statusBadge(normStatus(r.Status))}`;$('statusPanel').innerHTML=`${statusBadge(normStatus(r.Status))} <span class="muted">สร้างโดย ${escapeHtml(r.CreatedByName||'')} / ปรับปรุงล่าสุด ${formatThaiDate(r.UpdatedAt||r.CreatedAt)}</span>`;$('department').value=r.Department||'';$('phone').value=normalizePhoneClient(r.Phone||r.CreatedByPhone||'');$('docNoText').value=r.DocNoText||'นย';$('requestDate').value=toISODate(r.RequestDate);$('to').value=r.To||'นายแพทย์สาธารณสุขจังหวัดนครนายก';$('purchaseType').value=r.PurchaseType||'ซื้อ';$('subject').value=r.Subject||'';$('reason').value=r.Reason||'';$('purposeRegular').checked=isTrue(r.PurposeRegular);$('purposeStock').checked=isTrue(r.PurposeStock);$('purposeProject').checked=isTrue(r.PurposeProject);$('projectName').value=r.ProjectName||'';$('attachmentSpec').checked=isTrue(r.AttachmentSpec);$('attachmentSpecSheets').value=r.AttachmentSpecSheets||0;$('attachmentQuote').checked=isTrue(r.AttachmentQuote);$('attachmentQuoteSheets').value=r.AttachmentQuoteSheets||0;$('attachmentProject').checked=isTrue(r.AttachmentProject);$('attachmentProjectSheets').value=r.AttachmentProjectSheets||0;renderAttachmentLinks('specLinks',r.AttachmentSpecFileNames,r.AttachmentSpecFileUrls);renderAttachmentLinks('quoteLinks',r.AttachmentQuoteFileNames,r.AttachmentQuoteFileUrls);renderAttachmentLinks('projectLinks',r.AttachmentProjectFileNames,r.AttachmentProjectFileUrls);$('itemsTbody').innerHTML='';(items||[]).forEach(it=>addItemRow({itemName:it.ItemName,planBalanceAmount:it.PlanBalanceAmount,quantity:it.Quantity,unit:it.Unit,unitPrice:it.UnitPrice,totalPrice:it.TotalPrice,lastPrice:it.LastPrice}));if(!items||!items.length)addItemRow();calcItemsTotal();$('inspectorsTbody').innerHTML='';(inspectors||[]).forEach(ins=>addInspectorRow({fullName:ins.FullName,position:ins.Position,cid:ins.CID,email:ins.Email,userId:ins.UserID}));if(!inspectors||!inspectors.length)addInspectorRow();$('officerOpinionAnnualUnder100k').checked=isTrue(r.OfficerOpinionAnnualUnder100k);$('officerOpinionAnnualOver100k').checked=isTrue(r.OfficerOpinionAnnualOver100k);$('officerMethod').value=r.OfficerMethod||'เฉพาะเจาะจง';$('officerMethodInProgress').checked=isTrue(r.OfficerMethodInProgress);$('officerInProgressMethod').value=r.OfficerInProgressMethod||'';$('completionDays').value=r.CompletionDays||0;$('officerReason').value=r.OfficerReason||'';$('officerName').value=r.OfficerName||'';$('officerPosition').value=r.OfficerPosition||'เจ้าหน้าที่';$('deptHeadName').value=r.DeptHeadName||'';$('deptHeadPosition').value=r.DeptHeadPosition||'หัวหน้าเจ้าหน้าที่';$('planInPlan').checked=isTrue(r.PlanInPlan);$('planYear').value=r.PlanYear||'';$('planOther').value=r.PlanOther||'';$('planBudgetSource').value=r.PlanBudgetSource||'';$('planAmount').value=r.PlanAmount||r.TotalAmount||0;$('planRemark').value=r.PlanRemark||'';$('approverName').value=r.ApproverName||'';$('approverPosition').value=r.ApproverPosition||'นายแพทย์สาธารณสุขจังหวัดนครนายก';$('notes').value=r.Notes||'';updateActionVisibility(r);}
+    function renderAttachmentLinks(id,names,urls){const ns=splitLines(names), us=splitLines(urls);$(id).innerHTML=us.length?us.map((u,i)=>`<a href="${escapeAttr(u)}" target="_blank">เปิดไฟล์: ${escapeHtml(ns[i]||('ไฟล์ที่ '+(i+1)))}</a>`).join(''):'<span class="muted">ยังไม่มีไฟล์แนบ</span>';}
+    function updateActionVisibility(r){
+      const st=normStatus(r? r.Status : STATUS.DRAFT);
+      const saved=!!CURRENT_REQUEST_ID;
+      $('submitBtnTop').classList.toggle('hidden',!(saved&&(st===STATUS.DRAFT||st===STATUS.RETURNED)));
+      $('submitBtnBottom').classList.toggle('hidden',!(saved&&(st===STATUS.DRAFT||st===STATUS.RETURNED)));
+      $('checkBtnTop').classList.toggle('hidden',!(saved&&DATA.user&&DATA.user.isSupply&&st===STATUS.SUBMITTED));
+      $('printBtnTop').classList.toggle('hidden',!(saved&&st===STATUS.CHECKED));
+      $('printBtnBottom').classList.toggle('hidden',!(saved&&st===STATUS.CHECKED));
+      $('progressBtnBottom').classList.toggle('hidden',!saved);
+      const hasPdf = r && r.MainPdfUrl;
+      const canCreatePdf = saved && (st === STATUS.CHECKED || st === 'ส่งให้พัสดุตรวจสอบ' || st === 'อนุมัติแล้ว' || st === 'รับทราบแล้ว'); // Allow access if they need to sign
+      if($('createPdfBtnTop')) $('createPdfBtnTop').classList.toggle('hidden', !(saved && st === STATUS.CHECKED));
+      if($('createPdfBtnBottom')) $('createPdfBtnBottom').classList.toggle('hidden', !(saved && st === STATUS.CHECKED));
+      if(hasPdf) {
+          if($('createPdfBtnTop')) $('createPdfBtnTop').innerHTML = '📝 ลงนาม/จัดการ PDF';
+          if($('createPdfBtnBottom')) $('createPdfBtnBottom').innerHTML = '📝 ลงนาม/จัดการ PDF';
+      } else {
+          if($('createPdfBtnTop')) $('createPdfBtnTop').innerHTML = '📄 สร้างไฟล์ PDF คำขอ';
+          if($('createPdfBtnBottom')) $('createPdfBtnBottom').innerHTML = '📄 สร้างไฟล์ PDF คำขอ';
+      }
+      const isApprovedOrAck = st === 'อนุมัติแล้ว' || st === 'รับทราบแล้ว';
+      if(isApprovedOrAck) {
+          $('submitBtnTop').classList.add('hidden');
+          $('submitBtnBottom').classList.add('hidden');
+          $('checkBtnTop').classList.add('hidden');
+          if($('createPdfBtnTop')) $('createPdfBtnTop').classList.add('hidden'); 
+          if($('createPdfBtnBottom')) $('createPdfBtnBottom').classList.add('hidden');
+      }
+    }
+    function addItemRow(data={}){const tr=document.createElement('tr');tr.innerHTML=`<td class="center rowno"></td><td><input list="itemNameList" class="item-name" value="${escapeAttr(data.itemName||'')}"></td><td><input type="number" class="plan" step="0.01" value="${data.planBalanceAmount||0}" oninput="calcRow(this)"></td><td><input type="number" class="qty" step="0.01" value="${data.quantity||0}" oninput="calcRow(this)"></td><td><input list="unitList" class="unit" value="${escapeAttr(data.unit||'')}"></td><td><input type="number" class="unitprice" step="0.01" value="${data.unitPrice||0}" oninput="calcRow(this)"></td><td><input type="number" class="total" step="0.01" value="${data.totalPrice||0}" oninput="calcItemsTotal()"></td><td><input type="number" class="lastprice" step="0.01" value="${data.lastPrice||0}"></td><td><button class="btn btn-danger" onclick="this.closest('tr').remove();refreshRowNo();calcItemsTotal()">ลบ</button></td>`;$('itemsTbody').appendChild(tr);refreshRowNo();calcItemsTotal();}
+    function refreshRowNo(){[...$('itemsTbody').children].forEach((tr,i)=>tr.querySelector('.rowno').textContent=i+1);[...$('inspectorsTbody').children].forEach((tr,i)=>tr.querySelector('.rowno').textContent=i+1);}
+    function calcRow(el){const tr=el.closest('tr'), q=Number(tr.querySelector('.qty').value||0), p=Number(tr.querySelector('.unitprice').value||0);tr.querySelector('.total').value=(q*p).toFixed(2);calcItemsTotal();}
+    function calcItemsTotal(){const total=[...$('itemsTbody').querySelectorAll('.total')].reduce((s,i)=>s+Number(i.value||0),0);$('itemsTotal').textContent=money(total);if(!$('planAmount').value||Number($('planAmount').value)===0)$('planAmount').value=total.toFixed(2);}
+    function getItems(){return [...$('itemsTbody').children].map(tr=>({itemName:tr.querySelector('.item-name').value,planBalanceAmount:tr.querySelector('.plan').value,quantity:tr.querySelector('.qty').value,unit:tr.querySelector('.unit').value,unitPrice:tr.querySelector('.unitprice').value,totalPrice:tr.querySelector('.total').value,lastPrice:tr.querySelector('.lastprice').value})).filter(x=>x.itemName);}
+    function addInspectorRow(data={}){const tr=document.createElement('tr');tr.innerHTML=`<td class="center rowno"></td><td><input list="userList" class="ins-name" value="${escapeAttr(data.fullName||'')}" oninput="fillInspectorFromUser(this)"></td><td><input class="ins-position" value="${escapeAttr(data.position||'')}"></td><td><input class="ins-cid" value="${escapeAttr(data.cid||'')}"></td><td><input class="ins-email" value="${escapeAttr(data.email||'')}"><input type="hidden" class="ins-userid" value="${escapeAttr(data.userId||'')}"></td><td><button class="btn btn-danger" onclick="this.closest('tr').remove();refreshRowNo()">ลบ</button></td>`;$('inspectorsTbody').appendChild(tr);refreshRowNo();}
+    function fillInspectorFromUser(input){const u=(DATA.users||[]).find(x=>x.fullName===input.value);if(!u)return;const tr=input.closest('tr');tr.querySelector('.ins-position').value=u.position||'';tr.querySelector('.ins-cid').value=u.cid||'';tr.querySelector('.ins-email').value=u.email||'';tr.querySelector('.ins-userid').value=u.userId||'';}
+    function getInspectors(){return [...$('inspectorsTbody').children].map(tr=>({fullName:tr.querySelector('.ins-name').value,position:tr.querySelector('.ins-position').value,cid:tr.querySelector('.ins-cid').value,email:tr.querySelector('.ins-email').value,userId:tr.querySelector('.ins-userid').value})).filter(x=>x.fullName);}
+    async function readFiles(id){const files=[...$(id).files];return Promise.all(files.map(file=>new Promise((resolve,reject)=>{const fr=new FileReader();fr.onload=()=>resolve({name:file.name,mimeType:file.type,data:fr.result});fr.onerror=reject;fr.readAsDataURL(file);})));}
+    async function buildPayload(){return {requestId:CURRENT_REQUEST_ID,department:$('department').value,phone:normalizePhoneClient($('phone').value),docNoText:$('docNoText').value,requestDate:$('requestDate').value,to:$('to').value,purchaseType:$('purchaseType').value,subject:$('subject').value,reason:$('reason').value,purposeRegular:$('purposeRegular').checked,purposeStock:$('purposeStock').checked,purposeProject:$('purposeProject').checked,projectName:$('projectName').value,attachmentSpec:$('attachmentSpec').checked,attachmentSpecSheets:$('attachmentSpecSheets').value,attachmentSpecFiles:await readFiles('specFiles'),attachmentQuote:$('attachmentQuote').checked,attachmentQuoteSheets:$('attachmentQuoteSheets').value,attachmentQuoteFiles:await readFiles('quoteFiles'),attachmentProject:$('attachmentProject').checked,attachmentProjectSheets:$('attachmentProjectSheets').value,attachmentProjectFiles:await readFiles('projectFiles'),items:getItems(),inspectors:getInspectors(),officerOpinionAnnualUnder100k:$('officerOpinionAnnualUnder100k').checked,officerOpinionAnnualOver100k:$('officerOpinionAnnualOver100k').checked,officerMethod:$('officerMethod').value,officerMethodInProgress:$('officerMethodInProgress').checked,officerInProgressMethod:$('officerInProgressMethod').value,completionDays:$('completionDays').value,officerReason:$('officerReason').value,officerName:$('officerName').value,officerPosition:$('officerPosition').value,deptHeadName:$('deptHeadName').value,deptHeadPosition:$('deptHeadPosition').value,planInPlan:$('planInPlan').checked,planYear:$('planYear').value,planOther:$('planOther').value,planBudgetSource:$('planBudgetSource').value,planAmount:$('planAmount').value,planRemark:$('planRemark').value,approverName:$('approverName').value,approverPosition:$('approverPosition').value,notes:$('notes').value};}
+    async function saveCurrentRequest(){try{alertBox('formAlert','');const payload=await buildPayload();const res=await gasCall('saveRequest',SESSION,payload);CURRENT_REQUEST_ID=res.requestId;alertBox('formAlert',res.message,'ok');await reloadData();await openRequest(res.requestId);}catch(err){alertBox('formAlert',err.message||err,'danger')}}
+    async function submitCurrentRequest(){if(!CURRENT_REQUEST_ID)return alert('กรุณาบันทึกข้อมูลก่อน');openSignModal(CURRENT_REQUEST_ID,'SUBMIT');}
+    
+    let SIGN_REQUEST_ID='';
+    let SIGN_ACTION_TYPE='';
+    async function openSignModal(id, actionType){
+      SIGN_REQUEST_ID=id;
+      SIGN_ACTION_TYPE=actionType;
+      try{
+        let res;
+        if(id===CURRENT_REQUEST_ID&&CURRENT_DETAIL){res=CURRENT_DETAIL;}
+        else{res=await gasCall('getRequest',SESSION,id);}
+        renderPrint(res, 'signArea', 'signPage');
+        $('signModal').classList.remove('hidden');
+        setTimeout(()=>fitPrintToA4('signPage'),50);
+      }catch(err){alert(err.message||err)}
+    }
+    function closeSign(){$('signModal').classList.add('hidden');$('signArea').innerHTML='';}
+    function confirmSignAndForward(){closeSign();openForwardModal(SIGN_REQUEST_ID, SIGN_ACTION_TYPE);}
+    let FORWARD_REQUEST_ID='';
+    let signatureCtx=null, isSigning=false;
+    function initSignature(){const cv=$('signatureCanvas');if(!cv)return;signatureCtx=cv.getContext('2d');const pt=e=>{const r=cv.getBoundingClientRect(),c=e.touches?e.touches[0]:e;return{x:(c.clientX-r.left)*(cv.width/r.width),y:(c.clientY-r.top)*(cv.height/r.height)}};const start=e=>{isSigning=true;draw(e)};const stop=()=>{isSigning=false;signatureCtx.beginPath()};const draw=e=>{if(!isSigning)return;e.preventDefault();const p=pt(e);signatureCtx.lineWidth=4;signatureCtx.lineCap='round';signatureCtx.lineTo(p.x,p.y);signatureCtx.stroke();signatureCtx.beginPath();signatureCtx.moveTo(p.x,p.y)};cv.addEventListener('mousedown',start);cv.addEventListener('mousemove',draw);cv.addEventListener('mouseup',stop);cv.addEventListener('mouseout',stop);cv.addEventListener('touchstart',e=>{e.preventDefault();start(e)},{passive:false});cv.addEventListener('touchmove',e=>{e.preventDefault();draw(e)},{passive:false});cv.addEventListener('touchend',stop);}
+    function clearSignature(){if(signatureCtx)signatureCtx.clearRect(0,0,$('signatureCanvas').width,$('signatureCanvas').height);}
+    function isSignatureBlank(){const c=$('signatureCanvas'),b=document.createElement('canvas');b.width=c.width;b.height=c.height;return c.toDataURL()===b.toDataURL();}
+    function openForwardModal(id, actionType){
+      if(!signatureCtx) initSignature();
+      clearSignature();
+      FORWARD_REQUEST_ID=id;
+      const req = (DATA.requests||[]).find(r=>r.requestId===id) || CURRENT_DETAIL?.request;
+      $('forwardRequestNo').textContent = req ? (req.requestNo||req.RequestNo) : '';
+      let allowedUsers = [];
+      const myDept = DATA.user.department;
+      (DATA.users||[]).forEach(u => {
+         const pos = String(u.position||'').toLowerCase();
+         const isExec = u.isExecutive;
+         const isSupply = u.isSupply;
+         const isDeptHead = pos.indexOf('หัวหน้ากลุ่มงาน')>-1 || pos.indexOf('รองหัวหน้ากลุ่มงาน')>-1 || pos.indexOf('หัวหน้างาน')>-1;
+         if (isExec || isSupply || isDeptHead || u.department === myDept) {
+            allowedUsers.push(u);
+         }
+      });
+      $('forwardUserList').innerHTML = allowedUsers.map(u => `<option value="${escapeAttr(u.fullName)}">${escapeHtml(u.position)} ${escapeHtml(u.department)}</option>`).join('');
+      if (actionType === 'SUBMIT') $('forwardNextStatus').value = STATUS.SUBMITTED;
+      if (actionType === 'CHECK') $('forwardNextStatus').value = STATUS.CHECKED;
+      if (actionType === 'RETURN') $('forwardNextStatus').value = STATUS.RETURNED;
+      $('forwardNote').value = '';
+      $('forwardToUser').value = '';
+      /* Show current signer info */
+      const u = DATA.user;
+      $('forwardSignerInfo').innerHTML = `ลงนามโดย: <b>${escapeHtml(u.fullName)}</b> (${escapeHtml(u.position)}) ${u.signatureBase64 ? '✅ มีลายเซ็นในระบบ' : '⚠️ ยังไม่มีลายเซ็น'}`;
+      /* Auto-detect signer role from user position */
+      const pos = String(u.position||'').toLowerCase();
+      if(pos.indexOf('เจ้าหน้าที่พัสดุ')>-1||pos.indexOf('นักวิชาการพัสดุ')>-1) $('forwardSignerRole').value='เจ้าหน้าที่พัสดุ';
+      else if(pos.indexOf('หัวหน้าเจ้าหน้าที่')>-1) $('forwardSignerRole').value='หัวหน้าเจ้าหน้าที่';
+      else if(pos.indexOf('หัวหน้ากลุ่มงานบริหาร')>-1) $('forwardSignerRole').value='หัวหน้ากลุ่มงานบริหารทั่วไป';
+      else if(pos.indexOf('หัวหน้ากลุ่มงาน')>-1) $('forwardSignerRole').value='หัวหน้ากลุ่มงาน';
+      else if(pos.indexOf('รองนายแพทย์')>-1||pos.indexOf('รอง นพ.')>-1) $('forwardSignerRole').value='รอง นพ.สสจ.';
+      else if(pos.indexOf('นายแพทย์สาธารณสุข')>-1) $('forwardSignerRole').value='นพ.สสจ.';
+      else if(u.isExecutive) $('forwardSignerRole').value='นพ.สสจ.';
+      else $('forwardSignerRole').value='ผู้ขอใช้';
+      $('forwardModal').classList.remove('hidden');
+    }
+    function closeForward(){ $('forwardModal').classList.add('hidden'); clearSignature(); }
+    async function confirmForward(){
+      const toUser = $('forwardToUser').value;
+      const st = $('forwardNextStatus').value;
+      const note = $('forwardNote').value;
+      const signerRole = $('forwardSignerRole').value;
+      let sigBase64 = '';
+      if(signatureCtx && !isSignatureBlank()) sigBase64 = $('signatureCanvas').toDataURL('image/png');
+      if(!toUser) return alert('กรุณาระบุชื่อผู้รับเรื่องพิจารณาต่อ');
+      try{
+        const res = await gasCall('forwardRequest', SESSION, {requestId: FORWARD_REQUEST_ID, nextStatus: st, toUser: toUser, note: note, signerRole: signerRole, signatureBase64: sigBase64});
+        alert(res.message);
+        closeForward();
+        /* clear cache for this request */
+        delete DATA_CACHE[FORWARD_REQUEST_ID];
+        await reloadData();
+        if (CURRENT_REQUEST_ID === FORWARD_REQUEST_ID) await openRequest(FORWARD_REQUEST_ID);
+      }catch(err){alert(err.message||err)}
+    }
+    async function checkCurrentRequest(){if(!CURRENT_REQUEST_ID)return;await checkRequestById(CURRENT_REQUEST_ID);await openRequest(CURRENT_REQUEST_ID);}
+    async function checkRequestById(id){try{const remark=prompt('หมายเหตุการตรวจสอบ (ถ้ามี)','ผ่านการตรวจสอบ');if(remark===null)return;const res=await gasCall('supplyCheckPassed',SESSION,id,remark);alert(res.message);await reloadData();}catch(err){alert(err.message||err)}}
+    async function returnRequestById(id){try{const remark=prompt('กรุณาระบุเหตุผลที่ส่งกลับแก้ไข','เอกสารไม่ครบถ้วน');if(remark===null)return;const res=await gasCall('supplyReturnRequest',SESSION,id,remark);alert(res.message);await reloadData();}catch(err){alert(err.message||err)}}
+    function printCurrentRequest(){if(!CURRENT_REQUEST_ID){alert('กรุณาบันทึกข้อมูลก่อนพิมพ์');return;}printRequest(CURRENT_REQUEST_ID);}
+    async function printRequest(id){try{let res;if(id===CURRENT_REQUEST_ID&&CURRENT_DETAIL){res=CURRENT_DETAIL;}else{res=await gasCall('getRequest',SESSION,id);}if(normStatus(res.request.Status)!==STATUS.CHECKED){alert('พิมพ์เอกสารได้หลังเจ้าหน้าที่พัสดุกด “ผ่านการตรวจสอบ” เท่านั้น');return;}renderPrint(res, 'printArea', 'wordPage');$('printModal').classList.remove('hidden');setTimeout(()=>fitPrintToA4('wordPage'),50);}catch(err){alert(err.message||err)} }
+    function closePrint(){$('printModal').classList.add('hidden');$('printArea').innerHTML='';}
+    function renderPrint(data, targetId='printArea', pageId='wordPage'){const r=data.request, items=data.items||[], inspectors=data.inspectors||[], creator=data.creator||{};const sigs=data.signatures||{};const getSigUrl=(role,fb)=>(sigs[role]&&sigs[role].signatureUrl)?sigs[role].signatureUrl:(fb||'');const getSigName=(role,fb)=>(sigs[role]&&sigs[role].signerName)?sigs[role].signerName:(fb||'');const makeSig=(url,role,dots='................................................')=>{const dot=`ลงชื่อ${dots}${role}`;if(!url)return `<div class="sign-center sig-block" style="display:flex;align-items:flex-end;justify-content:center;">${dot}</div>`;let src=url;const m=url.match(/[-\w]{25,}/);if(m&&!url.startsWith('data:')&&!url.startsWith('http'))src='https://drive.google.com/uc?id='+m[0];return `<div class="sign-center sig-block" style="display:flex;align-items:flex-end;justify-content:center;position:relative;"><img class="signature-img" src="${escapeAttr(src)}" onerror="this.outerHTML='${dot}'" style="max-height:36px;margin-bottom:-2px;"></div>`;};const itemRows=items.map((it,i)=>`<tr><td class="center">${t(i+1)}</td><td>${escapeHtml(it.ItemName||'')}</td><td class="right">${moneyT(it.PlanBalanceAmount)}</td><td class="right">${numberT(it.Quantity)}</td><td class="center">${escapeHtml(it.Unit||'')}</td><td class="right">${moneyT(it.UnitPrice)}</td><td class="right">${moneyT(it.TotalPrice)}</td><td class="right">${moneyT(it.LastPrice)}</td></tr>`).join('')||'<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';const insRows=(inspectors.length===1)? `<div><span class="dotline" style="min-width:92mm">${escapeHtml(inspectors[0].FullName||'')}</span>ตำแหน่ง<span class="dotline" style="min-width:61mm">${escapeHtml(inspectors[0].Position||'')}</span></div><div>หมายเลขบัตรประชาชน<span class="dotline" style="min-width:58mm">${t(inspectors[0].CID||'')}</span> E-mail address : <span class="dotline" style="min-width:52mm">${escapeHtml(inspectors[0].Email||'')}</span></div>` : [0,1,2].map(i=>{const ins=inspectors[i]||{};return `<div>${t(i+1)}. <span class="dotline" style="min-width:92mm">${escapeHtml(ins.FullName||'')}</span>ตำแหน่ง<span class="dotline" style="min-width:61mm">${escapeHtml(ins.Position||'')}</span></div><div>หมายเลขบัตรประชาชน<span class="dotline" style="min-width:58mm">${t(ins.CID||'')}</span> E-mail address : <span class="dotline" style="min-width:52mm">${escapeHtml(ins.Email||'')}</span></div>`}).join('');$(targetId).innerHTML=`<div class="print-page" id="${pageId}"><div style="display:grid;grid-template-columns:30mm 1fr 30mm;align-items:start"><div class="garuda-wrap"><img class="garuda-img" src="${GARUDA_URL}"></div><div class="memo-title">บันทึกข้อความ</div><div></div></div><div class="memo-row"><span class="bold">ส่วนราชการ</span> <span class="dotline" style="min-width:102mm">${escapeHtml(r.Department||'')}</span><span class="bold">โทร.</span> <span class="dotline" style="min-width:38mm">${t(r.Phone||'')}</span></div><div class="memo-row"><span class="bold">ที่</span> <span class="dotline" style="min-width:78mm">${t(r.DocNoText||'นย')}</span><span class="bold">วันที่</span><span class="dotline" style="min-width:75mm">${formatThaiDateT(r.RequestDate)}</span></div><div class="memo-row"><span class="bold">เรื่อง</span> ขอความเห็นชอบ${escapeHtml(r.PurchaseType||'ซื้อ/จ้าง')} <span style="border-bottom:1px dotted #111;">${escapeHtml(r.Subject||'')}</span></div><hr class="top-rule"><div class="memo-row"><span class="bold">เรียน</span> ${escapeHtml(r.To||'นายแพทย์สาธารณสุขจังหวัดนครนายก')}</div><div class="memo-row indent">ด้วย<span class="dotline" style="min-width:45mm">${escapeHtml(r.Department||r.CreatedByDepartment||'')}</span>มีความประสงค์ขอความเห็นชอบ${escapeHtml(r.PurchaseType||'ซื้อ/จ้าง')} <span style="border-bottom:1px dotted #111;">${escapeHtml(r.Subject||'')}</span></div><div class="memo-row">จำนวน &nbsp;${t(items.length)}&nbsp; รายการ โดยมีเหตุผลและความจำเป็น <span style="border-bottom:1px dotted #111;">${escapeHtml(r.Reason||'')}</span></div><div class="memo-row">ซึ่ง ${box(r.PurposeRegular)} ใช้ในงานประจำ ${box(r.PurposeStock)} สำรองคลัง ${box(r.PurposeProject)} ใช้ในโครงการ <span style="border-bottom:1px dotted #111;">${escapeHtml(r.ProjectName||'')}</span> (ตามสำเนาที่แนบท้ายมาด้วย) มีรายละเอียดดังนี้</div><table class="print-table"><thead><tr><th rowspan="2" style="width:9mm">ลำดับ</th><th rowspan="2" style="width:45mm">รายการ</th><th rowspan="2" style="width:22mm">คงเหลือ<br>ยกมาตามแผน<br>(บาท)</th><th colspan="4">ความต้องการ${escapeHtml(r.PurchaseType||'ซื้อ/จ้าง')}ครั้งนี้</th><th rowspan="2" style="width:20mm">ราคา<br>ซื้อ<br>หลังสุด</th></tr><tr><th style="width:16mm">จำนวน</th><th style="width:17mm">หน่วยนับ</th><th style="width:20mm">ราคา/หน่วย</th><th style="width:22mm">ราคารวม</th></tr></thead><tbody>${itemRows}</tbody><tfoot><tr><th colspan="6" class="right">ราคารวม</th><th class="right">${moneyT(r.TotalAmount)}</th><th></th></tr></tfoot></table><div class="memo-row">พร้อมนี้ได้แนบ ${box(r.AttachmentSpec)} รายละเอียดคุณลักษณะเฉพาะ/ร่างขอบเขตงาน จำนวน &nbsp;${numberT(r.AttachmentSpecSheets)}&nbsp; แผ่น ${box(r.AttachmentQuote)} ใบเสนอราคา จำนวน &nbsp;${numberT(r.AttachmentQuoteSheets)}&nbsp; แผ่น ${box(r.AttachmentProject)} โครงการ จำนวน &nbsp;${numberT(r.AttachmentProjectSheets)}&nbsp; แผ่น</div><div class="memo-row">และขอแต่งตั้งคณะกรรมการตรวจรับพัสดุ/ผู้ตรวจรับพัสดุ ดังนี้</div><div class="print-small">${insRows}</div><div class="memo-row">จึงเรียนมาเพื่อโปรดพิจารณาและเห็นชอบต่อไป</div><table class="sign-table"><tr><td class="sig-left">${makeSig(getSigUrl('ผู้ขอใช้',creator.signatureBase64),'ผู้ขอใช้')}<div class="sign-center">( ${escapeHtml(getSigName('ผู้ขอใช้',r.CreatedByName))} )</div><div class="sign-center">${escapeHtml(r.CreatedByPosition||'')}</div><div style="height:4px"></div>${makeSig(getSigUrl('หัวหน้ากลุ่มงาน'),'หัวหน้ากลุ่มงาน')}<div class="sign-center">( ${escapeHtml(getSigName('หัวหน้ากลุ่มงาน',r.DeptHeadName))} )</div><div class="bold" style="margin-top:6px">ความเห็นของงานแผน/กลุ่มงานยุทธศาสตร์ฯ</div><div>${box(r.PlanInPlan)} ในแผนปี พ.ศ. <span class="dotline" style="min-width:31mm">${t(r.PlanYear||'')}</span></div><div>${box(r.PlanOther)} อื่นๆ<span class="dotline" style="min-width:65mm">${escapeHtml(r.PlanOther||'')}</span></div><div>${box(r.PlanBudgetSource)} จัดซื้อด้วยเงิน<span class="dotline" style="min-width:60mm">${escapeHtml(r.PlanBudgetSource||'')}</span></div><div>จำนวนเงิน<span class="dotline" style="min-width:63mm">${moneyT(r.PlanAmount||r.TotalAmount)}</span>บาท</div><div style="margin-top:3px"><span class="dotline" style="min-width:100%">${escapeHtml(r.PlanRemark||'')}</span></div></td><td class="sig-right print-small"><div class="center bold">ความเห็นของเจ้าหน้าที่/หัวหน้าเจ้าหน้าที่</div><div>${box(r.OfficerOpinionAnnualUnder100k)} เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี ไม่เกิน ๑ แสนบาท</div><div>${box(r.OfficerOpinionAnnualOver100k)} เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี เกิน ๑ แสนบาท</div><div>${box(r.OfficerMethod==='เฉพาะเจาะจง')} เห็นควรจัดซื้อ/จ้างโดยวิธีเฉพาะเจาะจง</div><div>${box(r.OfficerMethod==='คัดเลือก')} เห็นควรจัดซื้อ/จ้างโดยวิธีคัดเลือก</div><div>${box(String(r.OfficerMethod||'').indexOf('e-market')>-1)} เห็นควรจัดซื้อโดยวิธีตลาดอิเล็กทรอนิกส์ (e-market)</div><div>${box(String(r.OfficerMethod||'').indexOf('e-bidding')>-1)} เห็นควรจัดซื้อ/จ้างโดยวิธีประกวดราคาอิเล็กทรอนิกส์ (e-bidding)</div><div>${box(r.OfficerMethodInProgress)} เห็นควรจัดซื้อโดยวิธีเฉพาะเจาะจงก่อน เนื่องจากอยู่ระหว่างดำเนินการจัดซื้อ/จ้างโดยวิธี ${box(r.OfficerInProgressMethod==='e-market')} e-market ${box(r.OfficerInProgressMethod==='e-bidding')} e-bidding</div><div>กำหนดแล้วเสร็จประมาณ<span class="dotline" style="min-width:18mm">${numberT(r.CompletionDays)}</span>วัน นับถัดจากวันที่ผู้ขาย/ผู้รับจ้างได้รับใบสั่งซื้อ/สั่งจ้าง</div><div>${escapeHtml(r.OfficerReason||'')}</div>${makeSig(getSigUrl('เจ้าหน้าที่พัสดุ'),'เจ้าหน้าที่','.............................................')}<div class="sign-center">( ${escapeHtml(getSigName('เจ้าหน้าที่พัสดุ',r.OfficerName))} )</div>${makeSig(getSigUrl('หัวหน้าเจ้าหน้าที่'),'หัวหน้าเจ้าหน้าที่','.............................................')}<div class="sign-center">( ${escapeHtml(getSigName('หัวหน้าเจ้าหน้าที่',r.DeptHeadName))} )</div><div style="height:2px"></div>${makeSig(getSigUrl('หัวหน้ากลุ่มงานบริหารทั่วไป'),'หน.บริหารทั่วไป','.............................................')}<div class="sign-center">( ${escapeHtml(getSigName('หัวหน้ากลุ่มงานบริหารทั่วไป'))} )</div><div class="approval">เห็นชอบ</div>${makeSig(getSigUrl('รอง นพ.สสจ.'),'รอง นพ.สสจ.','.............................................')}<div class="sign-center">( ${escapeHtml(getSigName('รอง นพ.สสจ.'))} )</div><div style="height:2px"></div>${makeSig(getSigUrl('นพ.สสจ.'),'นพ.สสจ.','.............................................')}<div class="sign-center">( ${escapeHtml(getSigName('นพ.สสจ.',r.ApproverName)||'......................................................')} )</div><div class="sign-center">${escapeHtml(r.ApproverPosition||'นายแพทย์สาธารณสุขจังหวัดนครนายก')}</div></td></tr></table></div>`;}
+    function printExecutiveReport(){const d=DATA.dashboard||{}, rows=DATA.requests||[];const statusRows=(d.byStatus||[]).map(r=>`<tr><td>${escapeHtml(r.label)}</td><td class="right">${t(r.count)}</td><td class="right">${moneyT(r.amount)}</td></tr>`).join('');const deptRows=(d.byDepartment||[]).slice(0,20).map(r=>`<tr><td>${escapeHtml(r.label)}</td><td class="right">${t(r.count)}</td><td class="right">${moneyT(r.amount)}</td></tr>`).join('');const pending=rows.filter(r=>r.status===STATUS.SUBMITTED).slice(0,12).map((r,i)=>`<tr><td class="center">${t(i+1)}</td><td>${escapeHtml(r.requestNo)}</td><td>${escapeHtml(r.subject)}</td><td>${escapeHtml(r.department)}</td><td class="right">${moneyT(r.totalAmount)}</td></tr>`).join('');$('printArea').innerHTML=`<div class="print-page exec-report" id="wordPage"><h1>รายงานสรุปการเสนอความต้องการใช้พัสดุ</h1><div class="center">ข้อมูล ณ วันที่ ${formatThaiDateT(todayISO())}</div><div class="kpi-print"><div>คำขอทั้งหมด<b>${t(d.total||0)}</b>เรื่อง</div><div>วงเงินรวม<b>${moneyT(d.totalAmount||0)}</b>บาท</div><div>ผ่านตรวจสอบ<b>${t(d.checked||0)}</b>เรื่อง</div><div>รอตรวจสอบ<b>${t(d.pending||0)}</b>เรื่อง</div></div><div class="bold">๑. สรุปตามสถานะ</div><table class="print-table"><thead><tr><th>สถานะ</th><th>จำนวนเรื่อง</th><th>วงเงินรวม</th></tr></thead><tbody>${statusRows}</tbody></table><div class="bold">๒. สรุปตามกลุ่มงาน</div><table class="print-table"><thead><tr><th>กลุ่มงาน</th><th>จำนวนเรื่อง</th><th>วงเงินรวม</th></tr></thead><tbody>${deptRows}</tbody></table><div class="bold">๓. รายการรอเจ้าหน้าที่พัสดุตรวจสอบ</div><table class="print-table"><thead><tr><th style="width:12mm">ลำดับ</th><th style="width:33mm">เลขคำขอ</th><th>เรื่อง</th><th style="width:42mm">กลุ่มงาน</th><th style="width:28mm">วงเงิน</th></tr></thead><tbody>${pending||'<tr><td colspan="5" class="center">ไม่มีรายการรอตรวจสอบ</td></tr>'}</tbody></table><div style="margin-top:22mm;text-align:right">ลงชื่อ............................................................ผู้รายงาน</div></div>`;$('printModal').classList.remove('hidden');setTimeout(()=>fitPrintToA4('wordPage'),50);}
+    function fitPrintToA4(pageId='wordPage'){
+      /* Disabled scaling to allow multi-page printing */
+    }
+    function printA4(){ window.print(); }
+    window.addEventListener('beforeprint', ()=>{});
+    function downloadWord(){const html=$('printArea').innerHTML;if(!html)return;const doc=`<html><head><meta charset="utf-8"><style>@page{size:A4 portrait;margin:8.5mm 10.5mm 7mm 10.5mm}body{font-family:'TH Sarabun New','Sarabun',Arial,sans-serif;font-size:15.35pt;line-height:1.10;color:#000}.print-page{width:100%;}.garuda-img{height:14mm;width:auto}.memo-title{text-align:center;font-size:26pt;font-weight:bold;line-height:1.05}.dotline{border-bottom:1px dotted #111;display:inline-block}.memo-row{margin:2px 0}.print-table{width:100%;border-collapse:collapse;font-size:12.2pt}.print-table th,.print-table td{border:1px solid #000;padding:2px 2.8px;line-height:1.07}.center{text-align:center}.right{text-align:right}.bold{font-weight:bold}.box{display:inline-block;width:11px;height:11px;border:1px solid #000}.box.checked:after{content:'✓'}.sign-table{width:100%;margin-top:5px}.sign-table td{border:0;vertical-align:top}.print-small{font-size:11.8pt;line-height:1.05}.ppho-space{height:14mm}</style></head><body>${html}</body></html>`;const blob=new Blob(['\ufeff',doc],{type:'application/msword'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='supply_report.doc';document.body.appendChild(a);a.click();setTimeout(()=>{URL.revokeObjectURL(url);a.remove();},1000);}
+    async function openProgress(id){try{PROGRESS_REQUEST_ID=id;const detail=await gasCall('getRequest',SESSION,id);$('progressTitle').textContent=`${detail.request.RequestNo||''} : ${detail.request.Subject||''}`;renderProgressHistory(detail.progress||[]);$('progressStatus').value='';$('progressNote').value='';$('progressFiles').value='';$('progressModal').classList.remove('hidden');}catch(err){alert(err.message||err)}}
+    function closeProgress(){$('progressModal').classList.add('hidden');PROGRESS_REQUEST_ID='';}
+    function renderProgressHistory(rows){$('progressHistory').innerHTML=rows.length?rows.map(r=>{const us=splitLines(r.FileUrls), ns=splitLines(r.FileNames);return `<div class="alert alert-info"><b>${escapeHtml(r.ProgressStatus||'')}</b> <span class="muted small">${formatThaiDate(r.ProgressAt)} โดย ${escapeHtml(r.ProgressByName||'')}</span><div>${escapeHtml(r.Note||'')}</div><div class="link-list">${us.map((u,i)=>`<a href="${escapeAttr(u)}" target="_blank">${escapeHtml(ns[i]||('ไฟล์แนบ '+(i+1)))}</a>`).join('')}</div></div>`}).join(''):'<div class="muted center">ยังไม่มีประวัติความก้าวหน้า</div>';}
+    async function saveProgress(){try{if(!PROGRESS_REQUEST_ID)return;const files=await readFiles('progressFiles');const res=await gasCall('addProgressUpdate',SESSION,PROGRESS_REQUEST_ID,{progressStatus:$('progressStatus').value,note:$('progressNote').value,files});renderProgressHistory(res.progress||[]);$('progressStatus').value='';$('progressNote').value='';$('progressFiles').value='';alert(res.message);await reloadData();}catch(err){alert(err.message||err)}}
+    function renderSettings(){const rows=(DATA.settings&&DATA.settings.raw)||[];$('settingsTbody').innerHTML=rows.map(r=>`<tr><td>${escapeHtml(r.category)}</td><td>${escapeHtml(r.label)}</td><td>${escapeHtml(r.value)}</td></tr>`).join('')||'<tr><td colspan="3" class="center muted">ไม่มีข้อมูล</td></tr>';}
+    async function saveSetting(){try{const item={category:$('setCategory').value,label:$('setLabel').value,value:$('setValue').value};const res=await gasCall('saveSetting',SESSION,item);DATA.settings=res.settings;fillDatalists();renderSettings();$('setLabel').value='';$('setValue').value='';alert(res.message);}catch(err){alert(err.message||err)}}
+    function box(v){return isTrue(v)?'☑':'☐'}
+    function isTrue(v){return v===true||v===1||v==='1'||String(v).toLowerCase()==='true'}
+    function normStatus(s){s=String(s||'').trim();if(!s||s==='Draft')return STATUS.DRAFT;if(s==='Submitted')return STATUS.SUBMITTED;if(s==='Checked'||s==='ApprovedForPrint')return STATUS.CHECKED;if(s==='Returned')return STATUS.RETURNED;if(s==='Cancelled')return STATUS.CANCELLED;return s;}
+    function todayISO(){const d=new Date();d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,10)}
+    function toISODate(v){if(!v)return '';if(/^\d{4}-\d{2}-\d{2}/.test(String(v)))return String(v).slice(0,10);const d=new Date(v);if(isNaN(d))return '';d.setMinutes(d.getMinutes()-d.getTimezoneOffset());return d.toISOString().slice(0,10)}
+    function formatThaiDate(v){const iso=toISODate(v);if(!iso)return '';const [y,m,d]=iso.split('-').map(Number);return `${d} ${thaiMonth(m)} ${y+543}`}
+    function formatThaiDateT(v){return t(formatThaiDate(v))}
+    function thaiMonth(m){return ['','มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'][m]||''}
+    function money(v){return Number(v||0).toLocaleString('th-TH',{minimumFractionDigits:2,maximumFractionDigits:2})}
+    function number(v){const n=Number(v||0);return n?n.toLocaleString('th-TH',{maximumFractionDigits:2}):'0'}
+    function moneyT(v){return t(money(v))}
+    function numberT(v){if(v===''||v===null||v===undefined)return '';return t(number(v))}
+    function t(s){return String(s??'').replace(/[0-9]/g,d=>'๐๑๒๓๔๕๖๗๘๙'[d])}
+    function normalizePhoneClient(v){let s=String(v||'').trim();const d=s.replace(/\D/g,'');if(d.length===9 && d[0]!=='0')return '0'+d;return s;}
+    function splitLines(v){return String(v||'').split(/\n|\r|,\s*/).map(x=>x.trim()).filter(Boolean)}
+    function escapeHtml(s){return String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]))}
+    function escapeAttr(s){return escapeHtml(s)}
+    document.addEventListener('DOMContentLoaded',bootApp);
+
+let PDF_BLOB = null;
+let PDF_BASE64 = null;
+let CURRENT_PDF_DOC = null;
+let PDF_ITEMS = [];
+let SELECTED_PDF_ITEM = null;
+let PDF_SCALE = 1.5;
+
+async function initPdfCreation() {
+    try {
+        showLoading(true);
+        const r = CURRENT_DETAIL.request;
+        if (r.MainPdfUrl) {
+            const res = await gasCall('getMainPdfBase64', SESSION, CURRENT_REQUEST_ID);
+            PDF_BASE64 = res.base64;
+            await openPdfEditor();
+        } else {
+            $('printArea').classList.remove('hidden');
+            $('printModal').classList.add('hidden'); // Ensure modal is not covering
+            renderPrint(CURRENT_DETAIL, 'printArea', 'printPage');
+            const element = document.getElementById('printArea');
+            const opt = {
+              margin:       0,
+              filename:     'request.pdf',
+              image:        { type: 'jpeg', quality: 0.98 },
+              html2canvas:  { scale: 2, useCORS: true },
+              jsPDF:        { unit: 'mm', format: 'a4', orientation: 'portrait' }
+            };
+            const pdfBlob = await html2pdf().set(opt).from(element).outputPdf('blob');
+            const reader = new FileReader();
+            reader.readAsDataURL(pdfBlob);
+            reader.onloadend = async function() {
+                const base64data = reader.result;
+                PDF_BASE64 = base64data.split(',')[1];
+                $('printArea').classList.add('hidden');
+                await openPdfEditor();
+            }
+        }
+    } catch(err) {
+        showLoading(false);
+        alert(err.message || err);
+    }
+}
+
+async function openPdfEditor() {
+    $('pdfEditorModal').classList.remove('hidden');
+    PDF_ITEMS = [];
+    SELECTED_PDF_ITEM = null;
+    $('pdfItemsLayer').innerHTML = '';
+    
+    const pdfData = atob(PDF_BASE64);
+    const uint8Array = new Uint8Array(pdfData.length);
+    for (let i = 0; i < pdfData.length; i++) {
+        uint8Array[i] = pdfData.charCodeAt(i);
+    }
+    
+    CURRENT_PDF_DOC = await pdfjsLib.getDocument({data: uint8Array}).promise;
+    const page = await CURRENT_PDF_DOC.getPage(1);
+    
+    const canvas = $('pdfEditorCanvas');
+    const context = canvas.getContext('2d');
+    const viewport = page.getViewport({ scale: PDF_SCALE });
+    
+    canvas.width = viewport.width;
+    canvas.height = viewport.height;
+    
+    await page.render({ canvasContext: context, viewport: viewport }).promise;
+    showLoading(false);
+}
+
+function closePdfEditor() {
+    $('pdfEditorModal').classList.add('hidden');
+}
+
+function addPdfItem(type) {
+    const layer = $('pdfItemsLayer');
+    const id = 'pdfitem_' + Date.now();
+    const item = document.createElement('div');
+    item.id = id;
+    item.className = 'pdf-draggable-item';
+    item.style.position = 'absolute';
+    item.style.left = '100px';
+    item.style.top = '100px';
+    item.style.pointerEvents = 'auto';
+    item.style.cursor = 'move';
+    item.style.border = '1px dashed transparent';
+    
+    let content = '';
+    let itemData = { id, type, x: 100, y: 100, text: '' };
+    
+    const u = DATA.user || {};
+    
+    if (type === 'sig1') {
+        if (!u.signatureBase64) return alert('คุณยังไม่มีลายเซ็นในระบบ กรุณาติดต่อ admin หรือเพิ่มลายเซ็นก่อน');
+        let src = u.signatureBase64;
+        const m = src.match(/[-\w]{25,}/);
+        if (m && !src.startsWith('data:') && !src.startsWith('http')) {
+            src = 'https://drive.google.com/uc?id=' + m[0];
+        }
+        content = `<img src="${src}" style="max-height:50px; pointer-events:none;">`;
+        itemData.imgBase64 = u.signatureBase64;
+    } else if (type === 'garuda') {
+        content = `<img src="${GARUDA_URL}" style="max-height:50px; pointer-events:none;">`;
+    } else if (type === 'name_pos') {
+        const nameText = `(${u.fullName || ''})`;
+        const posText = u.position || '';
+        itemData.text = nameText + '\n' + posText;
+        content = `<div style="font-family:'TH Sarabun New', sans-serif; font-size:20px; line-height:1.2; text-align:center; color:black;">${nameText}<br>${posText}</div>`;
+    } else if (type === 'date') {
+        const d = new Date();
+        const m = ['มกราคม','กุมภาพันธ์','มีนาคม','เมษายน','พฤษภาคม','มิถุนายน','กรกฎาคม','สิงหาคม','กันยายน','ตุลาคม','พฤศจิกายน','ธันวาคม'];
+        itemData.text = `วันที่ ${d.getDate()} ${m[d.getMonth()]} ${d.getFullYear()+543}`;
+        content = `<div style="font-family:'TH Sarabun New', sans-serif; font-size:20px; color:black;">${itemData.text}</div>`;
+    } else if (type === 'check') {
+        itemData.text = '✓';
+        content = `<div style="font-family:sans-serif; font-size:24px; color:black; font-weight:bold;">✓</div>`;
+    } else if (type === 'text') {
+        itemData.text = 'พิมพ์ข้อความ...';
+        content = `<div contenteditable="true" style="font-family:'TH Sarabun New', sans-serif; font-size:20px; color:black; min-width:50px; outline:none; border-bottom:1px solid #ccc;">${itemData.text}</div>`;
+    }
+    
+    item.innerHTML = content;
+    
+    item.onmousedown = (e) => selectAndDragPdfItem(e, item, itemData);
+    item.ontouchstart = (e) => selectAndDragPdfItem(e, item, itemData);
+    if(type === 'text') {
+        item.querySelector('div').onblur = function() {
+            itemData.text = this.innerText;
+        };
+    }
+    
+    layer.appendChild(item);
+    PDF_ITEMS.push(itemData);
+    selectItem(item);
+}
+
+function selectItem(itemEl) {
+    document.querySelectorAll('.pdf-draggable-item').forEach(el => el.style.border = '1px dashed transparent');
+    if(itemEl) {
+        itemEl.style.border = '2px dashed #0ea5e9';
+        SELECTED_PDF_ITEM = itemEl.id;
+    } else {
+        SELECTED_PDF_ITEM = null;
+    }
+}
+
+function deleteSelectedPdfItem() {
+    if(SELECTED_PDF_ITEM) {
+        const el = document.getElementById(SELECTED_PDF_ITEM);
+        if(el) el.remove();
+        PDF_ITEMS = PDF_ITEMS.filter(x => x.id !== SELECTED_PDF_ITEM);
+        SELECTED_PDF_ITEM = null;
+    }
+}
+
+let activeDragItem = null;
+let dragStartX, dragStartY, dragInitialX, dragInitialY;
+
+function selectAndDragPdfItem(e, itemEl, itemData) {
+    if(e.target.tagName === 'DIV' && e.target.isContentEditable) {
+        selectItem(itemEl);
+        return; // Let user edit text
+    }
+    e.preventDefault();
+    selectItem(itemEl);
+    activeDragItem = { el: itemEl, data: itemData };
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    dragStartX = clientX;
+    dragStartY = clientY;
+    dragInitialX = itemEl.offsetLeft;
+    dragInitialY = itemEl.offsetTop;
+    
+    document.onmousemove = doDragPdfItem;
+    document.ontouchmove = doDragPdfItem;
+    document.onmouseup = stopDragPdfItem;
+    document.ontouchend = stopDragPdfItem;
+}
+
+function doDragPdfItem(e) {
+    if(!activeDragItem) return;
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+    let dx = clientX - dragStartX;
+    let dy = clientY - dragStartY;
+    let newX = dragInitialX + dx;
+    let newY = dragInitialY + dy;
+    
+    activeDragItem.el.style.left = newX + 'px';
+    activeDragItem.el.style.top = newY + 'px';
+    activeDragItem.data.x = newX;
+    activeDragItem.data.y = newY;
+}
+function stopDragPdfItem() {
+    activeDragItem = null;
+    document.onmousemove = null;
+    document.ontouchmove = null;
+    document.onmouseup = null;
+    document.ontouchend = null;
+}
+
+async function savePdfAndForward() {
+    selectItem(null);
+    try {
+        showLoading(true);
+        const existingPdfBytes = Uint8Array.from(atob(PDF_BASE64), c => c.charCodeAt(0));
+        const pdfDoc = await PDFLib.PDFDocument.load(existingPdfBytes);
+        
+        const layer = $('pdfItemsLayer');
+        const canvas = await html2canvas(layer, {
+            backgroundColor: null,
+            scale: PDF_SCALE
+        });
+        const overlayImgBase64 = canvas.toDataURL('image/png');
+        
+        const overlayImage = await pdfDoc.embedPng(overlayImgBase64);
+        const pages = pdfDoc.getPages();
+        const firstPage = pages[0];
+        
+        const { width, height } = firstPage.getSize();
+        
+        firstPage.drawImage(overlayImage, {
+            x: 0,
+            y: 0,
+            width: width,
+            height: height,
+        });
+        
+        const pdfBytes = await pdfDoc.save();
+        
+        let binary = '';
+        for (let i = 0; i < pdfBytes.byteLength; i++) {
+            binary += String.fromCharCode(pdfBytes[i]);
+        }
+        const finalBase64 = btoa(binary);
+        
+        const res = await gasCall('saveEditedPdf', SESSION, CURRENT_REQUEST_ID, finalBase64);
+        
+        CURRENT_DETAIL.request.MainPdfUrl = res.url;
+        if(DATA_CACHE[CURRENT_REQUEST_ID]) DATA_CACHE[CURRENT_REQUEST_ID].request.MainPdfUrl = res.url;
+        
+        closePdfEditor();
+        showLoading(false);
+        
+        openForwardModalDirect();
+    } catch(e) {
+        showLoading(false);
+        alert(e.message || e);
+    }
+}
+
+function openForwardModalDirect() {
+    const id = CURRENT_REQUEST_ID;
+    const r = CURRENT_DETAIL.request;
+    SIGN_REQUEST_ID = id;
+    SIGN_ACTION_TYPE = 'FORWARD';
+    $('forwardModal').classList.remove('hidden');
+    $('forwardRequestNo').textContent = 'คำขอ ' + (r.RequestNo || '');
+    $('forwardNote').value = '';
+    const st = normStatus(r.Status);
+    
+    $('forwardNextStatus').innerHTML = `
+        <option value="ผ่านการตรวจสอบ">ผ่านการตรวจสอบ / ส่งต่อ</option>
+        <option value="อนุมัติแล้ว">อนุมัติแล้ว / เสร็จสิ้น</option>
+        <option value="รับทราบแล้ว">รับทราบแล้ว</option>
+        <option value="ส่งกลับแก้ไข">ส่งกลับแก้ไข</option>
+    `;
+    $('forwardNextStatus').value = STATUS.CHECKED;
+}
+  </script>
+</body>
+</html>
