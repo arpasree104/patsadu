@@ -1,9 +1,10 @@
-/*******************************
- * ระบบบันทึกความต้องการใช้พัสดุ
- * Google Apps Script Web App
- * ไฟล์: Code.gs
- * รุ่นแก้ไขสมบูรณ์: เพิ่ม setting, workflow, upload files, progress logs, dashboard
- *******************************/
+/***********************************************************************
+ * ระบบเสนอความต้องการพัสดุ สำนักงานสาธารณสุขจังหวัดนครนายก
+ * Backend : Google Apps Script — Web App (JSON API)
+ * Frontend: static site (GitHub → Vercel) เรียกผ่าน fetch()
+ *
+ * วิธีติดตั้ง ดูที่ README.md ใน repository
+ ***********************************************************************/
 
 const CONFIG = {
   SPREADSHEET_ID: '1WXOk6jgVOGiCf02-5AOIy6l8jdgcDbQRU-CSG6n9_Ik',
@@ -14,41 +15,102 @@ const CONFIG = {
   LOG_SHEET: 'SupplyAuditLogs',
   SETTING_SHEET: 'setting',
   PROGRESS_SHEET: 'SupplyProgressLogs',
+  SESSION_SHEET: 'SupplySessions',
   ATTACHMENT_FOLDER_NAME: 'ระบบพัสดุ_ไฟล์แนบ',
-  APP_TITLE: 'ระบบบันทึกความต้องการใช้พัสดุ',
-  TIMEZONE: 'Asia/Bangkok'
+  APP_TITLE: 'ระบบเสนอความต้องการพัสดุ สสจ.นครนายก',
+  TIMEZONE: 'Asia/Bangkok',
+  SESSION_HOURS: 12,
+  MAX_LIST_ROWS: 1000
 };
 
+/** สถานะคำขอ */
 const STATUS = {
   DRAFT: 'ร่าง',
-  SUBMITTED: 'ส่งให้พัสดุตรวจสอบ',
-  CHECKED: 'ผ่านการตรวจสอบ',
+  SUBMITTED: 'รอพัสดุตรวจสอบ',
   RETURNED: 'ส่งกลับแก้ไข',
+  CHECKED: 'ผ่านการตรวจสอบ',
+  APPROVED: 'อนุมัติแล้ว',
+  IN_PROGRESS: 'อยู่ระหว่างจัดซื้อจัดจ้าง',
+  COMPLETED: 'ดำเนินการแล้วเสร็จ',
+  SUPERSEDED: 'แก้ไขเป็นเวอร์ชันใหม่',
   CANCELLED: 'ยกเลิก'
 };
 
+/** ประเภทเอกสารแนบ — BudgetPlan บังคับแนบก่อนส่งให้พัสดุ */
+const ATTACHMENT_TYPES = [
+  { key: 'BudgetPlan', label: 'แผนการใช้งบประมาณ', required: true },
+  { key: 'Project', label: 'โครงการ', required: false },
+  { key: 'Quote', label: 'ใบเสนอราคา', required: false },
+  { key: 'Tor', label: 'TOR / ขอบเขตของงาน', required: false },
+  { key: 'Spec', label: 'Specification / คุณลักษณะเฉพาะ', required: false }
+];
+
+/** ขั้นตอนการจัดซื้อจัดจ้างของพัสดุ (ข้อ 4) เรียงตามลำดับการดำเนินงาน */
+const PROCUREMENT_STAGES = [
+  'แผนจัดซื้อจัดจ้าง',
+  'TOR/ราคากลาง',
+  'รายงานขอซื้อขอจ้าง',
+  'แต่งตั้ง คกก.พิจารณาผลฯ/ตรวจรับพัสดุ',
+  'ร่าง/ประกาศประกวดราคา',
+  'หนังสือเชิญชวนเสนอราคา',
+  'รายงานผลการพิจารณา',
+  'ประกาศผู้ชนะการเสนอราคา',
+  'เว้นระยะอุทธรณ์',
+  'ลงนามสัญญา',
+  'บริหารสัญญา',
+  'รายงานผลการตรวจรับ'
+];
+
+const FINAL_STAGE = 'รายงานผลการตรวจรับ';
+
+const BUDGET_TYPES = ['ในงบประมาณ', 'นอกงบประมาณ'];
+
+/** หมวดใน setting ที่ใช้กำหนดสิทธิ */
+const ROLE_CATEGORIES = {
+  SUPPLY_OFFICER: 'SupplyOfficer',
+  SUPPLY_HEAD: 'SupplyHead',
+  SUPER_ADMIN: 'SuperAdmin'
+};
+
+function attachmentColumns_() {
+  const cols = [];
+  ATTACHMENT_TYPES.forEach(t => {
+    cols.push('Attachment' + t.key);
+    cols.push('Attachment' + t.key + 'Sheets');
+    cols.push('Attachment' + t.key + 'FileNames');
+    cols.push('Attachment' + t.key + 'FileUrls');
+    cols.push('Attachment' + t.key + 'FileIds');
+  });
+  return cols;
+}
+
 const REQUEST_HEADERS = [
-  'RequestID', 'RequestNo', 'CreatedAt', 'UpdatedAt',
+  'RequestID', 'RequestNo', 'RootRequestID', 'ParentRequestID', 'Version', 'IsLatest',
+  'CreatedAt', 'UpdatedAt',
   'CreatedByUserID', 'CreatedByName', 'CreatedByPosition', 'CreatedByDepartment',
   'CreatedByPhone', 'CreatedByEmail',
   'Department', 'Phone', 'DocNoText', 'RequestDate', 'Subject', 'To',
   'PurchaseType', 'ItemCount', 'Reason',
-  'PurposeRegular', 'PurposeStock', 'PurposeProject', 'ProjectName',
-  'AttachmentSpec', 'AttachmentSpecSheets', 'AttachmentSpecFileNames', 'AttachmentSpecFileUrls', 'AttachmentSpecFileIds',
-  'AttachmentQuote', 'AttachmentQuoteSheets', 'AttachmentQuoteFileNames', 'AttachmentQuoteFileUrls', 'AttachmentQuoteFileIds',
-  'AttachmentProject', 'AttachmentProjectSheets', 'AttachmentProjectFileNames', 'AttachmentProjectFileUrls', 'AttachmentProjectFileIds',
+  'PurposeRegular', 'PurposeStock', 'PurposeProject', 'ProjectName'
+].concat(attachmentColumns_()).concat([
   'TotalAmount', 'LastPurchaseTotal', 'Status',
   'SubmittedAt', 'SubmittedByUserID', 'SubmittedByName',
   'CheckedAt', 'CheckedByUserID', 'CheckedByName', 'CheckRemark',
-  'ReturnedAt', 'ReturnedByUserID', 'ReturnedByName', 'ReturnRemark',
+  'ReturnedAt', 'ReturnedByUserID', 'ReturnedByName', 'ReturnRemark', 'ReturnCount',
   'OfficerOpinionAnnualUnder100k', 'OfficerOpinionAnnualOver100k',
   'OfficerMethod', 'OfficerMethodInProgress', 'OfficerInProgressMethod',
   'CompletionDays', 'OfficerReason',
   'OfficerName', 'OfficerPosition', 'DeptHeadName', 'DeptHeadPosition',
-  'PlanInPlan', 'PlanYear', 'PlanOther', 'PlanBudgetSource', 'PlanAmount', 'PlanRemark',
-  'ApproverName', 'ApproverPosition', 'ApprovedAt', 'Notes',
+  'BudgetType', 'PlanInPlan', 'PlanYear', 'PlanOther', 'PlanBudgetSource',
+  'PlanAmount', 'PlanRemark', 'FiscalYear',
+  'ApproverName', 'ApproverPosition', 'Notes',
+  'ApprovedAt', 'ApprovedByUserID', 'ApprovedByName', 'ApprovedRemark',
+  'ApprovedDocFileNames', 'ApprovedDocFileUrls', 'ApprovedDocFileIds',
+  'IsLocked', 'LockedAt', 'LockedByUserID', 'LockedByName',
+  'UnlockedAt', 'UnlockedByUserID', 'UnlockedByName', 'UnlockReason',
+  'CurrentStage', 'CurrentStageAt', 'CompletedAt',
   'MainPdfFileId', 'MainPdfUrl'
-];
+]);
 
 const ITEM_HEADERS = [
   'LineID', 'RequestID', 'LineNo', 'ItemName', 'PlanBalanceAmount',
@@ -60,7 +122,7 @@ const INSPECTOR_HEADERS = [
 ];
 
 const LOG_HEADERS = [
-  'LogID', 'Timestamp', 'UserID', 'UserName', 'Action', 'RequestID', 'Detail'
+  'LogID', 'Timestamp', 'UserID', 'UserName', 'Action', 'RequestID', 'Detail', 'IP'
 ];
 
 const SETTING_HEADERS = [
@@ -70,34 +132,137 @@ const SETTING_HEADERS = [
 const PROGRESS_HEADERS = [
   'ProgressID', 'RequestID', 'RequestNo', 'ProgressAt',
   'ProgressByUserID', 'ProgressByName', 'ProgressStatus', 'Note',
+  'SupplyNote', 'MyNote',
   'FileNames', 'FileUrls', 'FileIds',
-  'SignerRole', 'SignerName', 'SignatureUrl'
+  'SignerRole', 'SignerName', 'SignatureUrl', 'CreatedAt'
 ];
 
-function doGet() {
-  setupSupplySystem();
-  return HtmlService.createHtmlOutputFromFile('index')
-    .setTitle(CONFIG.APP_TITLE)
-    .setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL)
-    .addMetaTag('viewport', 'width=device-width, initial-scale=1');
+const SESSION_HEADERS = ['Token', 'UserID', 'UserName', 'CreatedAt', 'ExpiresAt', 'Client'];
+
+/* =====================================================================
+ * Web App entry points
+ * ===================================================================*/
+
+function doGet(e) {
+  return route_(e, 'GET');
 }
+
+function doPost(e) {
+  return route_(e, 'POST');
+}
+
+function route_(e, method) {
+  e = e || {};
+  const params = e.parameter || {};
+  let body = {};
+  if (method === 'POST' && e.postData && e.postData.contents) {
+    try {
+      body = JSON.parse(e.postData.contents) || {};
+    } catch (err) {
+      return jsonOut_({ ok: false, error: 'รูปแบบข้อมูลที่ส่งมาไม่ถูกต้อง (JSON parse error)' }, params.callback);
+    }
+  }
+  const payload = Object.assign({}, params, body);
+  const action = String(payload.action || '').trim();
+  const callback = params.callback || body.callback || '';
+
+  if (!action) {
+    return jsonOut_({
+      ok: true,
+      service: CONFIG.APP_TITLE,
+      message: 'API พร้อมใช้งาน — ส่ง action มาด้วย เช่น ?action=ping',
+      version: apiVersion_()
+    }, callback);
+  }
+
+  try {
+    const handler = ACTIONS[action];
+    if (!handler) throw new Error('ไม่รู้จักคำสั่ง: ' + action);
+    clearTableCache_();
+    const result = handler(payload) || {};
+    if (result.ok === undefined) result.ok = true;
+    return jsonOut_(result, callback);
+  } catch (err) {
+    console.error(action + ' error: ' + (err && err.stack ? err.stack : err));
+    return jsonOut_({ ok: false, error: String(err && err.message ? err.message : err) }, callback);
+  }
+}
+
+function apiVersion_() {
+  return '2.0.0';
+}
+
+function jsonOut_(obj, callback) {
+  const text = JSON.stringify(obj);
+  if (callback) {
+    return ContentService.createTextOutput(callback + '(' + text + ');')
+      .setMimeType(ContentService.MimeType.JAVASCRIPT);
+  }
+  return ContentService.createTextOutput(text).setMimeType(ContentService.MimeType.JSON);
+}
+
+/* =====================================================================
+ * ตารางคำสั่งของ API
+ * ===================================================================*/
+
+const ACTIONS = {
+  ping: function (p) { return { ok: true, time: nowText_(), version: apiVersion_() }; },
+  setup: function (p) { return apiSetup_(p); },
+
+  login: function (p) { return apiLogin_(p); },
+  logout: function (p) { return apiLogout_(p); },
+  bootstrap: function (p) { return apiBootstrap_(p); },
+
+  listRequests: function (p) { return apiListRequests_(p); },
+  getRequest: function (p) { return apiGetRequest_(p); },
+  saveRequest: function (p) { return apiSaveRequest_(p); },
+  submitRequest: function (p) { return apiSubmitRequest_(p); },
+  reviewRequest: function (p) { return apiReviewRequest_(p); },
+  cancelRequest: function (p) { return apiCancelRequest_(p); },
+
+  attachApproval: function (p) { return apiAttachApproval_(p); },
+  setLock: function (p) { return apiSetLock_(p); },
+
+  addProgress: function (p) { return apiAddProgress_(p); },
+  listProgress: function (p) { return apiListProgress_(p); },
+  deleteProgress: function (p) { return apiDeleteProgress_(p); },
+
+  getSettings: function (p) { return apiGetSettings_(p); },
+  saveSetting: function (p) { return apiSaveSetting_(p); },
+  deleteSetting: function (p) { return apiDeleteSetting_(p); },
+  setRoleMembers: function (p) { return apiSetRoleMembers_(p); },
+
+  dashboard: function (p) { return apiDashboard_(p); },
+  publicDashboard: function (p) { return apiPublicDashboard_(p); },
+  exportRows: function (p) { return apiExportRows_(p); },
+
+  syncExport: function (p) { return apiSyncExport_(p); },
+  externalData: function (p) { return apiExternalData_(p); },
+
+  listLogs: function (p) { return apiListLogs_(p); }
+};
+
+/* =====================================================================
+ * โครงสร้างสเปรดชีต
+ * ===================================================================*/
 
 function onOpen() {
   SpreadsheetApp.getUi()
     .createMenu('ระบบพัสดุ')
     .addItem('ติดตั้ง/ปรับตารางระบบ', 'forceSetupSupplySystem_')
+    .addItem('ส่งข้อมูลออกไป Sheet ปลายทางเดี๋ยวนี้', 'runExportNow_')
     .addToUi();
 }
 
 function forceSetupSupplySystem_() {
   CacheService.getScriptCache().remove('isSetupDone');
-  const res = setupSupplySystem();
+  const res = setupSupplySystem(true);
   SpreadsheetApp.getUi().alert(res.message);
 }
 
-function setupSupplySystem() {
+function setupSupplySystem(force) {
   const cache = CacheService.getScriptCache();
-  if (cache.get('isSetupDone')) return { ok: true, message: 'ตรวจสอบตารางระบบเรียบร้อยแล้ว (Cached)' };
+  if (!force && cache.get('isSetupDone')) return { ok: true, message: 'ตรวจสอบตารางระบบเรียบร้อยแล้ว' };
 
   const ss = getSS_();
   ensureUserSheetReadable_();
@@ -107,18 +272,25 @@ function setupSupplySystem() {
   ensureSheet_(ss, CONFIG.LOG_SHEET, LOG_HEADERS);
   ensureSheet_(ss, CONFIG.SETTING_SHEET, SETTING_HEADERS);
   ensureSheet_(ss, CONFIG.PROGRESS_SHEET, PROGRESS_HEADERS);
+  ensureSheet_(ss, CONFIG.SESSION_SHEET, SESSION_HEADERS);
   seedDefaultSettings_();
+  migrateLegacyRequests_();
   applyTextFormats_();
-  
+
   cache.put('isSetupDone', '1', 21600);
-  return {
-    ok: true,
-    message: 'ตรวจสอบ/สร้างตารางระบบพัสดุเรียบร้อยแล้ว รวม setting และ SupplyProgressLogs แล้ว'
-  };
+  return { ok: true, message: 'ตรวจสอบ/ปรับโครงสร้างตารางระบบพัสดุเรียบร้อยแล้ว' };
+}
+
+function apiSetup_(p) {
+  const user = requireAuth_(p.token);
+  requireSuperAdmin_(user);
+  const res = setupSupplySystem(true);
+  addLog_(user, 'SETUP', '', res.message);
+  return res;
 }
 
 let cachedSS_ = null;
-let cachedTableData_ = {}; // batch-read cache: prevents re-reading the same sheet within one request
+let cachedTableData_ = {};
 
 function getSS_() {
   if (cachedSS_) return cachedSS_;
@@ -127,15 +299,13 @@ function getSS_() {
     return cachedSS_;
   }
   cachedSS_ = SpreadsheetApp.getActiveSpreadsheet();
-  if (!cachedSS_) {
-    throw new Error('ไม่พบ Spreadsheet กรุณาเปิด Apps Script จากไฟล์ Google Sheet หรือกำหนด CONFIG.SPREADSHEET_ID');
-  }
+  if (!cachedSS_) throw new Error('ไม่พบ Spreadsheet กรุณากำหนด CONFIG.SPREADSHEET_ID');
   return cachedSS_;
 }
 
 function clearTableCache_(sheetName) {
-  if (sheetName) { delete cachedTableData_[sheetName]; }
-  else { cachedTableData_ = {}; }
+  if (sheetName) delete cachedTableData_[sheetName];
+  else cachedTableData_ = {};
 }
 
 function ensureSheet_(ss, sheetName, headers) {
@@ -143,47 +313,35 @@ function ensureSheet_(ss, sheetName, headers) {
   if (!sh) sh = ss.insertSheet(sheetName);
 
   const lastCol = Math.max(sh.getLastColumn(), 1);
-  let currentHeaders = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
-  if (currentHeaders.length === 1 && currentHeaders[0] === '') currentHeaders = [];
+  let current = sh.getRange(1, 1, 1, lastCol).getValues()[0].map(String);
+  if (current.length === 1 && current[0] === '') current = [];
 
-  if (currentHeaders.length === 0) {
+  if (current.length === 0) {
     sh.getRange(1, 1, 1, headers.length).setValues([headers]);
   } else {
-    const missing = headers.filter(h => currentHeaders.indexOf(h) === -1);
+    const missing = headers.filter(h => current.indexOf(h) === -1);
     if (missing.length) {
-      sh.getRange(1, currentHeaders.length + 1, 1, missing.length).setValues([missing]);
+      sh.getRange(1, current.length + 1, 1, missing.length).setValues([missing]);
     }
   }
 
-  const finalLastCol = sh.getLastColumn();
   sh.setFrozenRows(1);
-  sh.getRange(1, 1, 1, finalLastCol)
-    .setBackground('#0f766e')
-    .setFontColor('#ffffff')
-    .setFontWeight('bold')
-    .setHorizontalAlignment('center')
-    .setVerticalAlignment('middle')
-    .setWrap(true);
-  try {
-    sh.autoResizeColumns(1, Math.min(finalLastCol, 30));
-  } catch (err) {
-    console.log(err.message);
-  }
+  sh.getRange(1, 1, 1, sh.getLastColumn())
+    .setBackground('#0f766e').setFontColor('#ffffff').setFontWeight('bold')
+    .setHorizontalAlignment('center').setVerticalAlignment('middle').setWrap(true);
   return sh;
 }
 
 function ensureUserSheetReadable_() {
   const sh = getSS_().getSheetByName(CONFIG.USER_SHEET);
-  if (!sh) throw new Error('ไม่พบแผ่นงาน UserAccounts กรุณาตรวจสอบชื่อแผ่นงานให้ตรงกับไฟล์เดิม');
+  if (!sh) throw new Error('ไม่พบแผ่นงาน ' + CONFIG.USER_SHEET);
   const headers = getHeaders_(sh);
   ['UserID', 'Username', 'Password', 'FullName', 'Position', 'Department', 'Role', 'IsActive'].forEach(h => {
-    if (headers.indexOf(h) === -1) throw new Error('แผ่นงาน UserAccounts ต้องมีคอลัมน์ ' + h);
+    if (headers.indexOf(h) === -1) throw new Error('แผ่นงาน ' + CONFIG.USER_SHEET + ' ต้องมีคอลัมน์ ' + h);
   });
 }
 
 function applyTextFormats_() {
-  const ss = getSS_();
-  setColumnsAsText_(CONFIG.USER_SHEET, ['UserID', 'Username', 'Password', 'CID', 'PhoneNumber']);
   setColumnsAsText_(CONFIG.REQUEST_SHEET, ['CreatedByPhone', 'Phone', 'DocNoText']);
   setColumnsAsText_(CONFIG.INSPECTOR_SHEET, ['CID']);
 }
@@ -197,6 +355,52 @@ function setColumnsAsText_(sheetName, colNames) {
     if (idx > 0) sh.getRange(1, idx, Math.max(sh.getMaxRows(), 2), 1).setNumberFormat('@');
   });
 }
+
+/**
+ * เติมค่าให้คำขอเดิมที่สร้างก่อนมีระบบเวอร์ชัน เพื่อให้ข้อมูลเก่ายังใช้งานได้
+ */
+function migrateLegacyRequests_() {
+  const sh = getSS_().getSheetByName(CONFIG.REQUEST_SHEET);
+  if (!sh || sh.getLastRow() < 2) return;
+  const headers = getHeaders_(sh);
+  const map = getHeaderMap_(headers);
+  const range = sh.getRange(2, 1, sh.getLastRow() - 1, headers.length);
+  const values = range.getValues();
+  let changed = false;
+
+  values.forEach(row => {
+    const id = row[map.RequestID];
+    if (!id) return;
+    if (!row[map.RootRequestID]) { row[map.RootRequestID] = id; changed = true; }
+    if (!row[map.Version]) { row[map.Version] = 1; changed = true; }
+    if (row[map.IsLatest] === '' || row[map.IsLatest] === null) { row[map.IsLatest] = 1; changed = true; }
+    if (!row[map.Status]) { row[map.Status] = STATUS.DRAFT; changed = true; }
+    if (!row[map.BudgetType]) {
+      row[map.BudgetType] = budgetTypeFromSource_(row[map.PlanBudgetSource]);
+      changed = true;
+    }
+    if (!row[map.FiscalYear]) {
+      row[map.FiscalYear] = fiscalYear_(toDate_(row[map.RequestDate]) || toDate_(row[map.CreatedAt]));
+      changed = true;
+    }
+    if (row[map.IsLocked] === '' || row[map.IsLocked] === null) { row[map.IsLocked] = 0; changed = true; }
+    // ย้ายข้อมูลแนบเดิม (AttachmentSpec = TOR รวม Specification) ให้อยู่ครบทั้ง 2 ช่องใหม่
+    if (row[map.AttachmentTor] === '' && row[map.AttachmentSpec]) {
+      row[map.AttachmentTor] = row[map.AttachmentSpec];
+      row[map.AttachmentTorSheets] = row[map.AttachmentSpecSheets];
+      row[map.AttachmentTorFileNames] = row[map.AttachmentSpecFileNames];
+      row[map.AttachmentTorFileUrls] = row[map.AttachmentSpecFileUrls];
+      row[map.AttachmentTorFileIds] = row[map.AttachmentSpecFileIds];
+      changed = true;
+    }
+  });
+
+  if (changed) range.setValues(values);
+}
+
+/* =====================================================================
+ * ตัวช่วยอ่าน/เขียนตาราง
+ * ===================================================================*/
 
 function getHeaders_(sh) {
   if (!sh || sh.getLastColumn() < 1) return [];
@@ -225,11 +429,49 @@ function getTableRows_(sheetName, forceRefresh) {
 }
 
 function normalizeCell_(value) {
-  if (value instanceof Date) {
-    return Utilities.formatDate(value, CONFIG.TIMEZONE, 'yyyy-MM-dd');
-  }
+  if (value instanceof Date) return formatDateTime_(value);
   if (value === null || value === undefined) return '';
   return value;
+}
+
+function formatDateTime_(d) {
+  if (!(d instanceof Date) || isNaN(d)) return '';
+  const hasTime = d.getHours() || d.getMinutes() || d.getSeconds();
+  return Utilities.formatDate(d, CONFIG.TIMEZONE, hasTime ? 'yyyy-MM-dd HH:mm:ss' : 'yyyy-MM-dd');
+}
+
+function nowText_() {
+  return Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss');
+}
+
+/** แปลงค่าจากชีต (Date, 'yyyy-MM-dd HH:mm:ss', 'd/M/yyyy, HH:mm:ss') ให้เป็น Date */
+function toDate_(value) {
+  if (!value && value !== 0) return null;
+  if (value instanceof Date) return isNaN(value) ? null : value;
+  const s = String(value).trim();
+  if (!s) return null;
+
+  let m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[ T](\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) {
+    return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]),
+      Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0));
+  }
+  m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})(?:,?\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?/);
+  if (m) {
+    let year = Number(m[3]);
+    if (year > 2400) year -= 543;
+    return new Date(year, Number(m[2]) - 1, Number(m[1]),
+      Number(m[4] || 0), Number(m[5] || 0), Number(m[6] || 0));
+  }
+  const d = new Date(s);
+  return isNaN(d) ? null : d;
+}
+
+/** ปีงบประมาณไทย (1 ต.ค. — 30 ก.ย.) */
+function fiscalYear_(date) {
+  const d = date instanceof Date ? date : (toDate_(date) || new Date());
+  const year = d.getFullYear() + (d.getMonth() >= 9 ? 1 : 0);
+  return year + 543;
 }
 
 function writeObjectRow_(sh, headers, obj, rowNumber) {
@@ -242,904 +484,13 @@ function appendObjectRow_(sh, headers, obj) {
   sh.appendRow(row);
 }
 
-function login(username, password) {
-  setupSupplySystem();
-  username = String(username || '').trim();
-  password = String(password || '').trim();
-  if (!username || !password) throw new Error('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
-
-  const user = getUserByLogin_(username, password);
-  if (!user) throw new Error('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
-  if (!isActive_(user.IsActive)) throw new Error('บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ');
-
-  addLog_(user, 'LOGIN', '', 'เข้าสู่ระบบ');
-  
-  const session = { userId: String(user.UserID), username: String(user.Username) };
-  const initialData = getInitialData(session);
-  return { ok: true, user: safeUser_(user), initialData: initialData };
+function appendObjectRows_(sh, headers, objs) {
+  if (!objs.length) return;
+  const rows = objs.map(obj => headers.map(h => obj[h] !== undefined && obj[h] !== null ? obj[h] : ''));
+  sh.getRange(sh.getLastRow() + 1, 1, rows.length, headers.length).setValues(rows);
 }
 
-function getUserByLogin_(username, password) {
-  const users = getAllUsers_();
-  return users.find(u => String(u.Username || '').trim() === username && String(u.Password || '').trim() === password) || null;
-}
-
-function getAllUsers_() {
-  const sh = getSS_().getSheetByName(CONFIG.USER_SHEET);
-  if (!sh || sh.getLastRow() < 2) return [];
-  const data = sh.getDataRange().getDisplayValues();
-  const headers = data[0].map(String);
-  return data.slice(1).map((row, idx) => {
-    const obj = { _rowNumber: idx + 2 };
-    headers.forEach((h, c) => obj[h] = row[c] === undefined || row[c] === null ? '' : String(row[c]));
-    return obj;
-  });
-}
-
-function getUserById_(userId) {
-  userId = String(userId || '').trim();
-  if (!userId) return null;
-  return getAllUsers_().find(u => String(u.UserID || '').trim() === userId) || null;
-}
-
-function isActive_(value) {
-  const v = String(value).toLowerCase().trim();
-  return v === '1' || v === 'true' || v === 'active' || v === 'yes' || v === 'ใช้งาน' || v === 'y';
-}
-
-function safeUser_(u) {
-  const positionLevel = String(u.PositionLevel || '').trim();
-  const position = [String(u.Position || '').trim(), positionLevel].filter(Boolean).join('');
-  const role = String(u.Role || '').trim();
-  return {
-    userId: String(u.UserID || '').trim(),
-    username: String(u.Username || '').trim(),
-    fullName: String(u.FullName || '').trim(),
-    position: position,
-    department: String(u.Department || '').trim(),
-    role: role,
-    cid: normalizeTextNumber_(u.CID),
-    email: String(u.Email || '').trim(),
-    phone: normalizePhone_(u.PhoneNumber || u.Phone || u.Mobile || ''),
-    signatureBase64: String(u.SignatureBase64 || u.Signature || u.signature || u.SignatureImage || '').trim(),
-    signatureBase64_2: String(u.SignatureBase64_2 || '').trim(),
-    personnelType: String(u.PersonnelType || '').trim(),
-    isSupply: isSupplyOfficer_(u),
-    isExecutive: isExecutive_(u)
-  };
-}
-
-function isSupplyOfficer_(user) {
-  const role = String(user.Role || '').toLowerCase();
-  const pos = String(user.Position || '').toLowerCase();
-  const dep = String(user.Department || '').toLowerCase();
-  return (role.indexOf('admin') > -1 && role.indexOf('hr') === -1) || role.indexOf('supply') > -1 || role.indexOf('พัสดุ') > -1 ||
-    pos.indexOf('พัสดุ') > -1 || dep.indexOf('พัสดุ') > -1;
-}
-
-function isExecutive_(user) {
-  const role = String(user.Role || '').toLowerCase();
-  const pos = String(user.Position || '').toLowerCase();
-  return role.indexOf('executive') > -1 || role.indexOf('ผู้บริหาร') > -1 ||
-         pos.indexOf('นายแพทย์') > -1 || pos.indexOf('รอง นพ.') > -1 || pos.indexOf('ผู้อำนวยการ') > -1;
-}
-
-function canSeeAll_(user) {
-  return isSupplyOfficer_(user) || isExecutive_(user);
-}
-
-function canSeeDepartment_(user) {
-  const role = String(user.Role || '').toLowerCase();
-  const pos = String(user.Position || '').toLowerCase();
-  return role.indexOf('depthead') > -1 || role.indexOf('หัวหน้า') > -1 ||
-         pos.indexOf('หัวหน้า') > -1 || pos.indexOf('รองหัวหน้า') > -1;
-}
-
-function requireUser_(session) {
-  if (!session || !session.userId) throw new Error('กรุณาเข้าสู่ระบบใหม่');
-  const user = getUserById_(session.userId);
-  if (!user) throw new Error('ไม่พบบัญชีผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
-  if (!isActive_(user.IsActive)) throw new Error('บัญชีนี้ถูกปิดใช้งาน');
-  return user;
-}
-
-function getInitialData(session) {
-  clearTableCache_(); // clear cache at start of each request
-  const user = requireUser_(session);
-  setupSupplySystem();
-  const users = getAllUsers_()
-    .filter(u => isActive_(u.IsActive))
-    .map(safeUser_)
-    .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
-  const requestsResult = listRequests(session, {});
-  const settings = getSettingsData_(session);
-  const dashboard = getDashboardData_(session, requestsResult.requests);
-  return {
-    ok: true,
-    user: safeUser_(user),
-    users: users,
-    requests: requestsResult.requests,
-    settings: settings.settings,
-    dashboard: dashboard.dashboard
-  };
-}
-
-function listRequests(session, filters) {
-  const user = requireUser_(session);
-  const rows = getTableRows_(CONFIG.REQUEST_SHEET);
-  const canAll = canSeeAll_(user);
-  const canDept = canSeeDepartment_(user);
-  filters = filters || {};
-
-  let result = rows.filter(r => {
-    if (!canAll) {
-      if (canDept) {
-        if (String(r.CreatedByDepartment || '') !== String(user.Department || '') && String(r.CreatedByUserID || '') !== String(user.UserID || '')) return false;
-      } else {
-        if (String(r.CreatedByUserID || '') !== String(user.UserID || '')) return false;
-      }
-    }
-    if (filters.status && normalizeStatus_(r.Status) !== normalizeStatus_(filters.status)) return false;
-    if (filters.keyword) {
-      const key = String(filters.keyword).toLowerCase();
-      const joined = [r.RequestNo, r.Subject, r.CreatedByName, r.Department, r.Reason, r.Status].join(' ').toLowerCase();
-      if (joined.indexOf(key) === -1) return false;
-    }
-    return true;
-  });
-
-  result.sort((a, b) => String(b.CreatedAt || '').localeCompare(String(a.CreatedAt || '')) || String(b.RequestNo || '').localeCompare(String(a.RequestNo || '')));
-  result = result.slice(0, 300).map(r => ({
-    requestId: r.RequestID,
-    requestNo: r.RequestNo,
-    requestDate: r.RequestDate,
-    subject: r.Subject,
-    department: r.Department,
-    requester: r.CreatedByName,
-    totalAmount: Number(r.TotalAmount || 0),
-    status: normalizeStatus_(r.Status),
-    purchaseType: r.PurchaseType || '',
-    submittedAt: r.SubmittedAt || '',
-    checkedAt: r.CheckedAt || '',
-    attachmentSpecFileUrls: r.AttachmentSpecFileUrls || '',
-    attachmentQuoteFileUrls: r.AttachmentQuoteFileUrls || '',
-    attachmentProjectFileUrls: r.AttachmentProjectFileUrls || ''
-  }));
-  return { ok: true, requests: result };
-}
-
-function getRequest(session, requestId) {
-  const user = requireUser_(session);
-  const request = getTableRows_(CONFIG.REQUEST_SHEET).find(r => String(r.RequestID) === String(requestId));
-  if (!request) throw new Error('ไม่พบคำขอ');
-
-  if (!canSeeAll_(user) && !canSeeDepartment_(user) && String(request.CreatedByUserID) !== String(user.UserID)) {
-    throw new Error('คุณไม่มีสิทธิเข้าถึงคำขอนี้');
-  }
-  if (canSeeDepartment_(user) && !canSeeAll_(user)) {
-    if (String(request.CreatedByDepartment || '') !== String(user.Department || '') && String(request.CreatedByUserID || '') !== String(user.UserID || '')) {
-      throw new Error('คุณไม่มีสิทธิเข้าถึงคำขอนี้');
-    }
-  }
-
-  request.Status = normalizeStatus_(request.Status);
-  request.Phone = normalizePhone_(request.Phone || request.CreatedByPhone || '');
-  request.CreatedByPhone = normalizePhone_(request.CreatedByPhone || '');
-
-  const items = getTableRows_(CONFIG.ITEM_SHEET)
-    .filter(r => String(r.RequestID) === String(requestId))
-    .sort((a, b) => Number(a.LineNo || 0) - Number(b.LineNo || 0));
-  const inspectors = getTableRows_(CONFIG.INSPECTOR_SHEET)
-    .filter(r => String(r.RequestID) === String(requestId))
-    .sort((a, b) => Number(a.Seq || 0) - Number(b.Seq || 0));
-  const progress = getProgressRows_(requestId);
-  const signatures = getSignaturesForRequest_(requestId);
-
-  const creator = getUserById_(request.CreatedByUserID);
-  return {
-    ok: true,
-    request: request,
-    items: items,
-    inspectors: inspectors,
-    progress: progress,
-    signatures: signatures,
-    creator: creator ? safeUser_(creator) : null
-  };
-}
-
-function saveRequest(session, payload) {
-  const user = requireUser_(session);
-  setupSupplySystem();
-  payload = payload || {};
-  if (!payload.subject) throw new Error('กรุณากรอกเรื่อง/รายการที่ต้องการซื้อหรือจ้าง');
-  if (!payload.reason) throw new Error('กรุณากรอกเหตุผลและความจำเป็น');
-  if (!payload.items || !payload.items.length) throw new Error('กรุณาเพิ่มรายการพัสดุอย่างน้อย 1 รายการ');
-
-  const now = new Date();
-  const requestSheet = getSS_().getSheetByName(CONFIG.REQUEST_SHEET);
-  const requestHeaders = getHeaders_(requestSheet);
-  const allRequests = getTableRows_(CONFIG.REQUEST_SHEET);
-  const isUpdate = payload.requestId && allRequests.some(r => String(r.RequestID) === String(payload.requestId));
-  const old = isUpdate ? allRequests.find(r => String(r.RequestID) === String(payload.requestId)) : null;
-
-  if (isUpdate && String(old.CreatedByUserID || '') !== String(user.UserID || '') && !canSeeAll_(user)) {
-    throw new Error('คุณไม่มีสิทธิแก้ไขคำขอนี้');
-  }
-
-  const oldStatus = isUpdate ? normalizeStatus_(old.Status) : STATUS.DRAFT;
-  if (isUpdate && oldStatus === STATUS.CHECKED && !isSupplyOfficer_(user)) {
-    throw new Error('คำขอนี้ผ่านการตรวจสอบแล้ว หากต้องการแก้ไขให้เจ้าหน้าที่พัสดุส่งกลับแก้ไขก่อน');
-  }
-
-  const userSafe = safeUser_(user);
-  const requestId = isUpdate ? old.RequestID : makeId_('REQ');
-  const requestNo = isUpdate ? old.RequestNo : makeRequestNo_();
-  const items = sanitizeItems_(payload.items);
-  const inspectors = sanitizeInspectors_(payload.inspectors || []);
-  const totalAmount = items.reduce((sum, it) => sum + Number(it.TotalPrice || 0), 0);
-  const lastPurchaseTotal = items.reduce((sum, it) => sum + Number(it.LastPrice || 0), 0);
-
-  const uploadedSpec = payload.attachmentSpec ? uploadFiles_(payload.attachmentSpecFiles || [], requestNo, 'รายละเอียดคุณลักษณะเฉพาะ_TOR') : emptyUpload_();
-  const uploadedQuote = payload.attachmentQuote ? uploadFiles_(payload.attachmentQuoteFiles || [], requestNo, 'ใบเสนอราคา') : emptyUpload_();
-  const uploadedProject = payload.attachmentProject ? uploadFiles_(payload.attachmentProjectFiles || [], requestNo, 'โครงการ') : emptyUpload_();
-
-  const specFiles = mergeOrClearFiles_(old, 'AttachmentSpec', 'AttachmentSpecFileNames', 'AttachmentSpecFileUrls', 'AttachmentSpecFileIds', payload.attachmentSpec, uploadedSpec);
-  const quoteFiles = mergeOrClearFiles_(old, 'AttachmentQuote', 'AttachmentQuoteFileNames', 'AttachmentQuoteFileUrls', 'AttachmentQuoteFileIds', payload.attachmentQuote, uploadedQuote);
-  const projectFiles = mergeOrClearFiles_(old, 'AttachmentProject', 'AttachmentProjectFileNames', 'AttachmentProjectFileUrls', 'AttachmentProjectFileIds', payload.attachmentProject, uploadedProject);
-
-  const status = isUpdate ? oldStatus : STATUS.DRAFT;
-  const record = {
-    RequestID: requestId,
-    RequestNo: requestNo,
-    CreatedAt: isUpdate ? old.CreatedAt : now,
-    UpdatedAt: now,
-    CreatedByUserID: isUpdate ? old.CreatedByUserID : user.UserID,
-    CreatedByName: isUpdate ? old.CreatedByName : userSafe.fullName,
-    CreatedByPosition: isUpdate ? old.CreatedByPosition : userSafe.position,
-    CreatedByDepartment: isUpdate ? old.CreatedByDepartment : userSafe.department,
-    CreatedByPhone: normalizePhone_(isUpdate ? old.CreatedByPhone : userSafe.phone),
-    CreatedByEmail: isUpdate ? old.CreatedByEmail : userSafe.email,
-    Department: payload.department || userSafe.department,
-    Phone: normalizePhone_(payload.phone || userSafe.phone),
-    DocNoText: payload.docNoText || 'นย',
-    RequestDate: payload.requestDate ? new Date(payload.requestDate) : now,
-    Subject: payload.subject || '',
-    To: payload.to || 'นายแพทย์สาธารณสุขจังหวัดนครนายก',
-    PurchaseType: payload.purchaseType || 'ซื้อ',
-    ItemCount: items.length,
-    Reason: payload.reason || '',
-    PurposeRegular: bool01_(payload.purposeRegular),
-    PurposeStock: bool01_(payload.purposeStock),
-    PurposeProject: bool01_(payload.purposeProject),
-    ProjectName: payload.projectName || '',
-    AttachmentSpec: bool01_(payload.attachmentSpec),
-    AttachmentSpecSheets: Number(payload.attachmentSpecSheets || 0),
-    AttachmentSpecFileNames: specFiles.names,
-    AttachmentSpecFileUrls: specFiles.urls,
-    AttachmentSpecFileIds: specFiles.ids,
-    AttachmentQuote: bool01_(payload.attachmentQuote),
-    AttachmentQuoteSheets: Number(payload.attachmentQuoteSheets || 0),
-    AttachmentQuoteFileNames: quoteFiles.names,
-    AttachmentQuoteFileUrls: quoteFiles.urls,
-    AttachmentQuoteFileIds: quoteFiles.ids,
-    AttachmentProject: bool01_(payload.attachmentProject),
-    AttachmentProjectSheets: Number(payload.attachmentProjectSheets || 0),
-    AttachmentProjectFileNames: projectFiles.names,
-    AttachmentProjectFileUrls: projectFiles.urls,
-    AttachmentProjectFileIds: projectFiles.ids,
-    TotalAmount: totalAmount,
-    LastPurchaseTotal: lastPurchaseTotal,
-    Status: status,
-    SubmittedAt: isUpdate ? old.SubmittedAt : '',
-    SubmittedByUserID: isUpdate ? old.SubmittedByUserID : '',
-    SubmittedByName: isUpdate ? old.SubmittedByName : '',
-    CheckedAt: isUpdate ? old.CheckedAt : '',
-    CheckedByUserID: isUpdate ? old.CheckedByUserID : '',
-    CheckedByName: isUpdate ? old.CheckedByName : '',
-    CheckRemark: isUpdate ? old.CheckRemark : '',
-    ReturnedAt: isUpdate ? old.ReturnedAt : '',
-    ReturnedByUserID: isUpdate ? old.ReturnedByUserID : '',
-    ReturnedByName: isUpdate ? old.ReturnedByName : '',
-    ReturnRemark: isUpdate ? old.ReturnRemark : '',
-    OfficerOpinionAnnualUnder100k: bool01_(payload.officerOpinionAnnualUnder100k),
-    OfficerOpinionAnnualOver100k: bool01_(payload.officerOpinionAnnualOver100k),
-    OfficerMethod: payload.officerMethod || 'เฉพาะเจาะจง',
-    OfficerMethodInProgress: bool01_(payload.officerMethodInProgress),
-    OfficerInProgressMethod: payload.officerInProgressMethod || '',
-    CompletionDays: Number(payload.completionDays || 0),
-    OfficerReason: payload.officerReason || 'เนื่องจากมีความจำเป็นต้องใช้ในงานราชการของ สสจ.นครนายก',
-    OfficerName: payload.officerName || '',
-    OfficerPosition: payload.officerPosition || '',
-    DeptHeadName: payload.deptHeadName || '',
-    DeptHeadPosition: payload.deptHeadPosition || '',
-    PlanInPlan: bool01_(payload.planInPlan),
-    PlanYear: payload.planYear || '',
-    PlanOther: payload.planOther || '',
-    PlanBudgetSource: payload.planBudgetSource || '',
-    PlanAmount: Number(payload.planAmount || totalAmount || 0),
-    PlanRemark: payload.planRemark || '',
-    ApproverName: payload.approverName || '',
-    ApproverPosition: payload.approverPosition || 'นายแพทย์สาธารณสุขจังหวัดนครนายก',
-    ApprovedAt: payload.approvedAt ? new Date(payload.approvedAt) : '',
-    Notes: payload.notes || ''
-  };
-
-  if (isUpdate) {
-    writeObjectRow_(requestSheet, requestHeaders, record, old._rowNumber);
-    deleteRowsByRequestId_(CONFIG.ITEM_SHEET, 'RequestID', requestId);
-    deleteRowsByRequestId_(CONFIG.INSPECTOR_SHEET, 'RequestID', requestId);
-  } else {
-    appendObjectRow_(requestSheet, requestHeaders, record);
-  }
-
-  const itemSheet = getSS_().getSheetByName(CONFIG.ITEM_SHEET);
-  const itemHeaders = getHeaders_(itemSheet);
-  items.forEach((it, i) => {
-    appendObjectRow_(itemSheet, itemHeaders, Object.assign({}, it, {
-      LineID: makeId_('LINE'),
-      RequestID: requestId,
-      LineNo: i + 1
-    }));
-  });
-
-  const inspectorSheet = getSS_().getSheetByName(CONFIG.INSPECTOR_SHEET);
-  const inspectorHeaders = getHeaders_(inspectorSheet);
-  inspectors.forEach((ins, i) => {
-    appendObjectRow_(inspectorSheet, inspectorHeaders, Object.assign({}, ins, {
-      InspectorID: makeId_('INS'),
-      RequestID: requestId,
-      Seq: i + 1
-    }));
-  });
-
-  addLog_(user, isUpdate ? 'UPDATE_REQUEST' : 'CREATE_REQUEST', requestId, requestNo);
-  return { ok: true, requestId: requestId, requestNo: requestNo, message: 'บันทึกคำขอเรียบร้อยแล้ว' };
-}
-
-function sanitizeItems_(items) {
-  return (items || [])
-    .filter(it => it && String(it.itemName || '').trim())
-    .map(it => {
-      const quantity = Number(it.quantity || 0);
-      const unitPrice = Number(it.unitPrice || 0);
-      const total = quantity * unitPrice;
-      return {
-        ItemName: String(it.itemName || '').trim(),
-        PlanBalanceAmount: Number(it.planBalanceAmount || 0),
-        Quantity: quantity,
-        Unit: String(it.unit || '').trim(),
-        UnitPrice: unitPrice,
-        TotalPrice: Number(it.totalPrice || total || 0),
-        LastPrice: Number(it.lastPrice || 0),
-        Remark: String(it.remark || '').trim()
-      };
-    });
-}
-
-function sanitizeInspectors_(inspectors) {
-  return (inspectors || [])
-    .filter(ins => ins && String(ins.fullName || '').trim())
-    .slice(0, 3)
-    .map(ins => ({
-      FullName: String(ins.fullName || '').trim(),
-      Position: String(ins.position || '').trim(),
-      CID: normalizeTextNumber_(ins.cid || ''),
-      Email: String(ins.email || '').trim(),
-      UserID: String(ins.userId || '').trim()
-    }));
-}
-
-function forwardRequest(session, payload) {
-  const user = requireUser_(session);
-  clearTableCache_(); // clear cache before mutation
-  const row = getRequestRow_(payload.requestId);
-  const toUser = payload.toUser ? String(payload.toUser).trim() : 'ไม่ระบุชื่อ';
-  const signerRole = payload.signerRole ? String(payload.signerRole).trim() : '';
-  const userSafe = safeUser_(user);
-  const signatureUrl = userSafe.signatureBase64 || '';
-  
-  const status = normalizeStatus_(row.Status);
-  const nextStatus = payload.nextStatus || status;
-
-  let updateData = {
-    Status: nextStatus,
-    UpdatedAt: new Date()
-  };
-
-  if (nextStatus === STATUS.SUBMITTED) {
-    updateData.SubmittedAt = new Date();
-    updateData.SubmittedByUserID = user.UserID;
-    updateData.SubmittedByName = user.FullName || user.Username || '';
-  } else if (nextStatus === STATUS.CHECKED) {
-    updateData.CheckedAt = new Date();
-    updateData.CheckedByUserID = user.UserID;
-    updateData.CheckedByName = user.FullName || user.Username || '';
-    updateData.CheckRemark = payload.note || 'ผ่านการตรวจสอบ';
-  } else if (nextStatus === STATUS.RETURNED) {
-    updateData.ReturnedAt = new Date();
-    updateData.ReturnedByUserID = user.UserID;
-    updateData.ReturnedByName = user.FullName || user.Username || '';
-    updateData.ReturnRemark = payload.note || 'ส่งกลับแก้ไข';
-  }
-
-  updateRequestFields_(payload.requestId, updateData);
-  addLog_(user, 'FORWARD_REQUEST', payload.requestId, `ส่งต่อเป็น ${nextStatus} ให้ ${toUser}`);
-  addProgressWithSignature_(session, payload.requestId, {
-    progressStatus: nextStatus,
-    note: (payload.note ? payload.note + '\n\n' : '') + 'ส่งเรื่องพิจารณาต่อให้: ' + toUser,
-    signerRole: signerRole,
-    signerName: userSafe.fullName,
-    signatureUrl: signatureUrl
-  });
-
-  return { ok: true, message: 'ลงนามและส่งต่อเรียบร้อยแล้ว' };
-}
-
-
-function submitRequest(session, requestId) {
-  const user = requireUser_(session);
-  const row = getRequestRow_(requestId);
-  if (String(row.CreatedByUserID || '') !== String(user.UserID || '') && !canSeeAll_(user)) {
-    throw new Error('ส่งคำขอได้เฉพาะผู้สร้างคำขอหรือเจ้าหน้าที่ที่มีสิทธิ');
-  }
-  const status = normalizeStatus_(row.Status);
-  if (status !== STATUS.DRAFT && status !== STATUS.RETURNED) {
-    throw new Error('ส่งให้พัสดุตรวจสอบได้เฉพาะสถานะร่างหรือส่งกลับแก้ไข');
-  }
-  updateRequestFields_(requestId, {
-    Status: STATUS.SUBMITTED,
-    UpdatedAt: new Date(),
-    SubmittedAt: new Date(),
-    SubmittedByUserID: user.UserID,
-    SubmittedByName: user.FullName || user.Username || ''
-  });
-  addLog_(user, 'SUBMIT_REQUEST', requestId, row.RequestNo);
-  addProgressUpdate(session, requestId, {
-    progressStatus: STATUS.SUBMITTED,
-    note: 'ส่งคำขอให้เจ้าหน้าที่พัสดุตรวจสอบ',
-    files: []
-  });
-  return { ok: true, message: 'ส่งคำขอให้เจ้าหน้าที่พัสดุตรวจสอบเรียบร้อยแล้ว' };
-}
-
-function supplyCheckPassed(session, requestId, remark) {
-  const user = requireUser_(session);
-  if (!isSupplyOfficer_(user)) throw new Error('เฉพาะเจ้าหน้าที่พัสดุหรือผู้ดูแลระบบเท่านั้นที่กดผ่านการตรวจสอบได้');
-  const row = getRequestRow_(requestId);
-  const status = normalizeStatus_(row.Status);
-  if (status !== STATUS.SUBMITTED && status !== STATUS.RETURNED && status !== STATUS.DRAFT) {
-    throw new Error('สถานะนี้ไม่สามารถกดผ่านการตรวจสอบได้');
-  }
-  updateRequestFields_(requestId, {
-    Status: STATUS.CHECKED,
-    UpdatedAt: new Date(),
-    CheckedAt: new Date(),
-    CheckedByUserID: user.UserID,
-    CheckedByName: user.FullName || user.Username || '',
-    CheckRemark: remark || 'ผ่านการตรวจสอบ'
-  });
-  addLog_(user, 'SUPPLY_CHECK_PASSED', requestId, remark || 'ผ่านการตรวจสอบ');
-  addProgressUpdate(session, requestId, {
-    progressStatus: STATUS.CHECKED,
-    note: remark || 'ผ่านการตรวจสอบ',
-    files: []
-  });
-  return { ok: true, message: 'บันทึกผลผ่านการตรวจสอบเรียบร้อยแล้ว' };
-}
-
-function supplyReturnRequest(session, requestId, remark) {
-  const user = requireUser_(session);
-  if (!isSupplyOfficer_(user)) throw new Error('เฉพาะเจ้าหน้าที่พัสดุหรือผู้ดูแลระบบเท่านั้นที่ส่งกลับแก้ไขได้');
-  const row = getRequestRow_(requestId);
-  updateRequestFields_(requestId, {
-    Status: STATUS.RETURNED,
-    UpdatedAt: new Date(),
-    ReturnedAt: new Date(),
-    ReturnedByUserID: user.UserID,
-    ReturnedByName: user.FullName || user.Username || '',
-    ReturnRemark: remark || ''
-  });
-  addLog_(user, 'SUPPLY_RETURN_REQUEST', requestId, remark || 'ส่งกลับแก้ไข');
-  addProgressUpdate(session, requestId, {
-    progressStatus: STATUS.RETURNED,
-    note: remark || 'ส่งกลับแก้ไข',
-    files: []
-  });
-  return { ok: true, message: 'ส่งกลับให้แก้ไขเรียบร้อยแล้ว' };
-}
-
-function cancelRequest(session, requestId) {
-  const user = requireUser_(session);
-  const row = getRequestRow_(requestId);
-  if (String(row.CreatedByUserID || '') !== String(user.UserID || '') && !canSeeAll_(user)) {
-    throw new Error('คุณไม่มีสิทธิยกเลิกคำขอนี้');
-  }
-  updateRequestFields_(requestId, {
-    Status: STATUS.CANCELLED,
-    UpdatedAt: new Date()
-  });
-  addLog_(user, 'CANCEL_REQUEST', requestId, row.RequestNo);
-  return { ok: true, message: 'ยกเลิกคำขอแล้ว' };
-}
-
-function getRequestRow_(requestId) {
-  const row = getTableRows_(CONFIG.REQUEST_SHEET).find(r => String(r.RequestID) === String(requestId));
-  if (!row) throw new Error('ไม่พบคำขอ');
-  return row;
-}
-
-function updateRequestFields_(requestId, fields) {
-  const sh = getSS_().getSheetByName(CONFIG.REQUEST_SHEET);
-  const headers = getHeaders_(sh);
-  const map = getHeaderMap_(headers);
-  const row = getRequestRow_(requestId);
-  Object.keys(fields).forEach(k => {
-    if (map[k] !== undefined) sh.getRange(row._rowNumber, map[k] + 1).setValue(fields[k]);
-  });
-}
-
-function addProgressUpdate(session, requestId, payload) {
-  const user = requireUser_(session);
-  setupSupplySystem();
-  const row = getRequestRow_(requestId);
-  if (!canSeeAll_(user) && !canSeeDepartment_(user) && String(row.CreatedByUserID || '') !== String(user.UserID || '')) {
-    throw new Error('คุณไม่มีสิทธิบันทึกความก้าวหน้าคำขอนี้');
-  }
-  const files = uploadFiles_((payload && payload.files) || [], row.RequestNo || requestId, 'ความก้าวหน้า');
-  const progressStatus = payload && payload.progressStatus ? String(payload.progressStatus).trim() : 'บันทึกความก้าวหน้า';
-  const note = payload && payload.note ? String(payload.note).trim() : '';
-  const sh = getSS_().getSheetByName(CONFIG.PROGRESS_SHEET);
-  const headers = getHeaders_(sh);
-  appendObjectRow_(sh, headers, {
-    ProgressID: makeId_('PROG'),
-    RequestID: requestId,
-    RequestNo: row.RequestNo || '',
-    ProgressAt: new Date(),
-    ProgressByUserID: user.UserID || '',
-    ProgressByName: user.FullName || user.Username || '',
-    ProgressStatus: progressStatus,
-    Note: note,
-    FileNames: files.names,
-    FileUrls: files.urls,
-    FileIds: files.ids,
-    SignerRole: '',
-    SignerName: '',
-    SignatureUrl: ''
-  });
-  clearTableCache_(CONFIG.PROGRESS_SHEET);
-  updateRequestFields_(requestId, { UpdatedAt: new Date() });
-  addLog_(user, 'ADD_PROGRESS', requestId, progressStatus + ' ' + note);
-  return {
-    ok: true,
-    message: 'บันทึกความก้าวหน้าเรียบร้อยแล้ว',
-    progress: getProgressRows_(requestId)
-  };
-}
-
-// บันทึกความก้าวหน้าพร้อมลายเซ็น (ใช้จาก forwardRequest)
-function addProgressWithSignature_(session, requestId, data) {
-  const user = requireUser_(session);
-  const row = getRequestRow_(requestId);
-  const sh = getSS_().getSheetByName(CONFIG.PROGRESS_SHEET);
-  const headers = getHeaders_(sh);
-  appendObjectRow_(sh, headers, {
-    ProgressID: makeId_('PROG'),
-    RequestID: requestId,
-    RequestNo: row.RequestNo || '',
-    ProgressAt: new Date(),
-    ProgressByUserID: user.UserID || '',
-    ProgressByName: user.FullName || user.Username || '',
-    ProgressStatus: data.progressStatus || '',
-    Note: data.note || '',
-    FileNames: '',
-    FileUrls: '',
-    FileIds: '',
-    SignerRole: data.signerRole || '',
-    SignerName: data.signerName || '',
-    SignatureUrl: data.signatureUrl || ''
-  });
-  clearTableCache_(CONFIG.PROGRESS_SHEET);
-  updateRequestFields_(requestId, { UpdatedAt: new Date() });
-  addLog_(user, 'SIGN_AND_FORWARD', requestId, (data.signerRole || '') + ' ' + (data.signerName || ''));
-}
-
-// ดึงลายเซ็นทั้งหมดของคำขอ จัดกลุ่มตาม SignerRole
-function getSignaturesForRequest_(requestId) {
-  const rows = getTableRows_(CONFIG.PROGRESS_SHEET)
-    .filter(r => String(r.RequestID) === String(requestId) && String(r.SignerRole || '').trim());
-  const sigs = {};
-  rows.forEach(r => {
-    const role = String(r.SignerRole || '').trim();
-    // เก็บลายเซ็นล่าสุดของแต่ละ role
-    sigs[role] = {
-      signerRole: role,
-      signerName: String(r.SignerName || '').trim(),
-      signatureUrl: String(r.SignatureUrl || '').trim(),
-      signedAt: r.ProgressAt || ''
-    };
-  });
-  return sigs;
-}
-
-function getProgressRows_(requestId) {
-  return getTableRows_(CONFIG.PROGRESS_SHEET)
-    .filter(r => String(r.RequestID) === String(requestId))
-    .sort((a, b) => String(b.ProgressAt || '').localeCompare(String(a.ProgressAt || '')) || String(b.ProgressID || '').localeCompare(String(a.ProgressID || '')));
-}
-
-function saveSetting(session, item) {
-  const user = requireUser_(session);
-  if (!isSupplyOfficer_(user)) throw new Error('เฉพาะเจ้าหน้าที่พัสดุหรือผู้ดูแลระบบเท่านั้นที่แก้ไข Setting ได้');
-  item = item || {};
-  const category = String(item.category || '').trim();
-  const label = String(item.label || '').trim();
-  const value = String(item.value || label || '').trim();
-  if (!category) throw new Error('กรุณาเลือกประเภท');
-  if (!label && !value) throw new Error('กรุณากรอกชื่อที่แสดงหรือค่า');
-
-  const sh = getSS_().getSheetByName(CONFIG.SETTING_SHEET);
-  const headers = getHeaders_(sh);
-  const count = Math.max(0, sh.getLastRow() - 1);
-  appendObjectRow_(sh, headers, {
-    SettingID: makeId_('SET'),
-    Category: category,
-    Label: label || value,
-    Value: value,
-    SortOrder: count + 1,
-    IsActive: 1,
-    Remark: '',
-    UpdatedAt: new Date()
-  });
-  addLog_(user, 'SAVE_SETTING', '', category + ': ' + (label || value));
-  return { ok: true, message: 'เพิ่มตัวเลือกเรียบร้อยแล้ว', settings: buildSettings_() };
-}
-
-function getSettingsData_(session) {
-  requireUser_(session);
-  return { ok: true, settings: buildSettings_() };
-}
-
-function buildSettings_() {
-  const rows = getTableRows_(CONFIG.SETTING_SHEET)
-    .filter(r => isActive_(r.IsActive))
-    .sort((a, b) => Number(a.SortOrder || 0) - Number(b.SortOrder || 0));
-
-  const byCategory = function(category) {
-    return rows
-      .filter(r => String(r.Category || '') === category)
-      .map(r => String(r.Value || r.Label || '').trim())
-      .filter(Boolean)
-      .filter((v, i, arr) => arr.indexOf(v) === i);
-  };
-  const defaults = {};
-  rows.filter(r => String(r.Category || '') === 'Default').forEach(r => {
-    const key = String(r.Label || '').trim();
-    if (key) defaults[key] = String(r.Value || '').trim();
-  });
-  return {
-    raw: rows.map(r => ({
-      category: r.Category || '',
-      label: r.Label || '',
-      value: r.Value || ''
-    })),
-    itemNames: byCategory('ItemName'),
-    units: byCategory('Unit'),
-    budgetSources: byCategory('BudgetSource'),
-    progressStatuses: byCategory('ProgressStatus'),
-    defaults: defaults
-  };
-}
-
-function seedDefaultSettings_() {
-  const sh = getSS_().getSheetByName(CONFIG.SETTING_SHEET);
-  if (!sh) return;
-  if (sh.getLastRow() > 1) return;
-  const headers = getHeaders_(sh);
-  const defaults = [
-    ['Default', 'ชื่อผู้รับเรื่อง', 'นายแพทย์สาธารณสุขจังหวัดนครนายก'],
-    ['Default', 'ชื่อเจ้าหน้าที่พัสดุ', ''],
-    ['Default', 'ตำแหน่งเจ้าหน้าที่พัสดุ', 'เจ้าหน้าที่'],
-    ['Default', 'ชื่อหัวหน้าเจ้าหน้าที่', ''],
-    ['Default', 'ตำแหน่งหัวหน้าเจ้าหน้าที่', 'หัวหน้าเจ้าหน้าที่'],
-    ['Default', 'ชื่อนายแพทย์สาธารณสุขจังหวัดนครนายก', ''],
-    ['ItemName', 'กระดาษ A4', 'กระดาษ A4'],
-    ['ItemName', 'ปากกาลูกลื่น', 'ปากกาลูกลื่น'],
-    ['ItemName', 'หมึกพิมพ์', 'หมึกพิมพ์'],
-    ['Unit', 'รีม', 'รีม'],
-    ['Unit', 'แท่ง', 'แท่ง'],
-    ['Unit', 'กล่อง', 'กล่อง'],
-    ['Unit', 'ชุด', 'ชุด'],
-    ['Unit', 'รายการ', 'รายการ'],
-    ['BudgetSource', 'เงินบำรุง', 'เงินบำรุง'],
-    ['BudgetSource', 'งบประมาณรายจ่ายประจำปี', 'งบประมาณรายจ่ายประจำปี'],
-    ['BudgetSource', 'เงินโครงการ', 'เงินโครงการ'],
-    ['ProgressStatus', 'เสนอหัวหน้ากลุ่มงาน', 'เสนอหัวหน้ากลุ่มงาน'],
-    ['ProgressStatus', 'ส่งให้พัสดุตรวจสอบ', STATUS.SUBMITTED],
-    ['ProgressStatus', 'ผ่านการตรวจสอบ', STATUS.CHECKED],
-    ['ProgressStatus', 'เสนอผู้บริหาร', 'เสนอผู้บริหาร'],
-    ['ProgressStatus', 'ได้รับอนุมัติ', 'ได้รับอนุมัติ'],
-    ['ProgressStatus', 'ออกใบสั่งซื้อ/สั่งจ้าง', 'ออกใบสั่งซื้อ/สั่งจ้าง'],
-    ['ProgressStatus', 'ตรวจรับพัสดุ', 'ตรวจรับพัสดุ'],
-    ['ProgressStatus', 'เบิกจ่ายแล้ว', 'เบิกจ่ายแล้ว']
-  ];
-  defaults.forEach((d, i) => {
-    appendObjectRow_(sh, headers, {
-      SettingID: makeId_('SET'),
-      Category: d[0],
-      Label: d[1],
-      Value: d[2],
-      SortOrder: i + 1,
-      IsActive: 1,
-      Remark: 'ค่าเริ่มต้นระบบ',
-      UpdatedAt: new Date()
-    });
-  });
-}
-
-function getDashboardData_(session, prefetchedRequests) {
-  const user = requireUser_(session);
-  const rows = prefetchedRequests || listRequests(session, {}).requests || [];
-  const total = rows.length;
-  const totalAmount = rows.reduce((sum, r) => sum + Number(r.totalAmount || 0), 0);
-  const pending = rows.filter(r => normalizeStatus_(r.status) === STATUS.SUBMITTED).length;
-  const checked = rows.filter(r => normalizeStatus_(r.status) === STATUS.CHECKED).length;
-  const byStatus = aggregate_(rows, 'status');
-  const byDepartment = aggregate_(rows, 'department');
-  return {
-    ok: true,
-    dashboard: {
-      total: total,
-      totalAmount: totalAmount,
-      pending: pending,
-      checked: checked,
-      byStatus: byStatus,
-      byDepartment: byDepartment,
-      generatedAt: Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss')
-    }
-  };
-}
-
-function aggregate_(rows, key) {
-  const map = {};
-  rows.forEach(r => {
-    const label = String(r[key] || 'ไม่ระบุ').trim() || 'ไม่ระบุ';
-    if (!map[label]) map[label] = { label: label, count: 0, amount: 0 };
-    map[label].count += 1;
-    map[label].amount += Number(r.totalAmount || 0);
-  });
-  return Object.keys(map).map(k => map[k]).sort((a, b) => b.count - a.count || b.amount - a.amount);
-}
-
-function getPublicDashboardData() {
-  clearTableCache_();
-  setupSupplySystem();
-  
-  const rows = getTableRows_(CONFIG.REQUEST_SHEET);
-  const allRequests = rows.map(r => ({
-    requestId: r.RequestID,
-    requestNo: r.RequestNo,
-    requestDate: r.RequestDate,
-    subject: r.Subject,
-    department: r.Department,
-    requester: r.CreatedByName,
-    totalAmount: Number(r.TotalAmount || 0),
-    status: normalizeStatus_(r.Status),
-    purchaseType: r.PurchaseType || '',
-    createdAt: r.CreatedAt || ''
-  }));
-
-  const total = allRequests.length;
-  const totalAmount = allRequests.reduce((sum, r) => sum + Number(r.totalAmount || 0), 0);
-  const pending = allRequests.filter(r => r.status === STATUS.SUBMITTED).length;
-  const checked = allRequests.filter(r => r.status === STATUS.CHECKED).length;
-  
-  const byStatus = aggregate_(allRequests, 'status');
-  const byDepartment = aggregate_(allRequests, 'department');
-  
-  allRequests.sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')) || String(b.requestNo || '').localeCompare(String(a.requestNo || '')));
-  
-  return {
-    ok: true,
-    requests: allRequests.slice(0, 300),
-    dashboard: {
-      total: total,
-      totalAmount: totalAmount,
-      pending: pending,
-      checked: checked,
-      byStatus: byStatus,
-      byDepartment: byDepartment,
-      generatedAt: Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyy-MM-dd HH:mm:ss')
-    }
-  };
-}
-
-function uploadFiles_(files, requestNo, category) {
-  if (!files || !files.length) return emptyUpload_();
-  const folder = getAttachmentFolder_();
-  const names = [];
-  const urls = [];
-  const ids = [];
-  files.forEach((f, idx) => {
-    if (!f || !f.data) return;
-    const data = String(f.data);
-    const match = data.match(/^data:([^;]+);base64,(.+)$/);
-    if (!match) return;
-    const mimeType = f.mimeType || match[1] || 'application/octet-stream';
-    const bytes = Utilities.base64Decode(match[2]);
-    const originalName = sanitizeFileName_(f.name || ('file_' + (idx + 1)));
-    const finalName = sanitizeFileName_([requestNo || 'REQ', category || 'เอกสารแนบ', Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyyMMdd_HHmmss'), originalName].join('_'));
-    const blob = Utilities.newBlob(bytes, mimeType, finalName);
-    const file = folder.createFile(blob);
-    try {
-      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-    } catch (err) {
-      console.log('setSharing error: ' + err.message);
-    }
-    names.push(finalName);
-    urls.push(file.getUrl());
-    ids.push(file.getId());
-  });
-  return {
-    names: names.join('\n'),
-    urls: urls.join('\n'),
-    ids: ids.join('\n')
-  };
-}
-
-function getAttachmentFolder_() {
-  const rootName = CONFIG.ATTACHMENT_FOLDER_NAME;
-  const folders = DriveApp.getFoldersByName(rootName);
-  if (folders.hasNext()) return folders.next();
-  return DriveApp.createFolder(rootName);
-}
-
-function emptyUpload_() {
-  return { names: '', urls: '', ids: '' };
-}
-
-function mergeOrClearFiles_(old, flagName, nameField, urlField, idField, checked, uploaded) {
-  if (!checked) return emptyUpload_();
-  const oldNames = old ? String(old[nameField] || '') : '';
-  const oldUrls = old ? String(old[urlField] || '') : '';
-  const oldIds = old ? String(old[idField] || '') : '';
-  return {
-    names: joinNonEmpty_([oldNames, uploaded.names]),
-    urls: joinNonEmpty_([oldUrls, uploaded.urls]),
-    ids: joinNonEmpty_([oldIds, uploaded.ids])
-  };
-}
-
-function joinNonEmpty_(arr) {
-  return arr.map(v => String(v || '').trim()).filter(Boolean).join('\n');
-}
-
-function sanitizeFileName_(name) {
-  return String(name || '').replace(/[\\/:*?"<>|#%{}~&]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 180);
-}
-
-function normalizeStatus_(status) {
-  const s = String(status || '').trim();
-  if (!s || s === 'Draft') return STATUS.DRAFT;
-  if (s === 'Submitted') return STATUS.SUBMITTED;
-  if (s === 'Checked' || s === 'ApprovedForPrint') return STATUS.CHECKED;
-  if (s === 'Returned') return STATUS.RETURNED;
-  if (s === 'Cancelled') return STATUS.CANCELLED;
-  return s;
-}
-
-function normalizePhone_(value) {
-  let s = normalizeTextNumber_(value);
-  const digits = s.replace(/\D/g, '');
-  if (digits.length === 9 && digits.charAt(0) !== '0') return '0' + digits;
-  return s;
-}
-
-function normalizeTextNumber_(value) {
-  if (value === null || value === undefined) return '';
-  return String(value).trim();
-}
-
-function deleteRowsByRequestId_(sheetName, colName, requestId) {
+function deleteRowsByValue_(sheetName, colName, value) {
   const sh = getSS_().getSheetByName(sheetName);
   if (!sh || sh.getLastRow() < 2) return;
   const headers = getHeaders_(sh);
@@ -1147,26 +498,1713 @@ function deleteRowsByRequestId_(sheetName, colName, requestId) {
   if (colIndex < 1) return;
   const values = sh.getRange(2, colIndex, sh.getLastRow() - 1, 1).getValues();
   for (let i = values.length - 1; i >= 0; i--) {
-    if (String(values[i][0]) === String(requestId)) sh.deleteRow(i + 2);
+    if (String(values[i][0]) === String(value)) sh.deleteRow(i + 2);
   }
-}
-
-function bool01_(value) {
-  return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true' ? 1 : 0;
+  clearTableCache_(sheetName);
 }
 
 function makeId_(prefix) {
   return prefix + '-' + Utilities.getUuid().slice(0, 8) + '-' + new Date().getTime();
 }
 
-function makeRequestNo_() {
+function bool01_(value) {
+  return value === true || value === 1 || value === '1' || String(value).toLowerCase() === 'true' ? 1 : 0;
+}
+
+function isTrue_(value) {
+  const v = String(value).toLowerCase().trim();
+  return v === '1' || v === 'true' || v === 'yes' || v === 'y' || v === 'active' || v === 'ใช้งาน';
+}
+
+function num_(value) {
+  const n = Number(String(value === null || value === undefined ? '' : value).replace(/,/g, ''));
+  return isNaN(n) ? 0 : n;
+}
+
+function text_(value) {
+  return value === null || value === undefined ? '' : String(value).trim();
+}
+
+function normalizePhone_(value) {
+  const s = text_(value);
+  const digits = s.replace(/\D/g, '');
+  if (digits.length === 9 && digits.charAt(0) !== '0') return '0' + digits;
+  return s;
+}
+
+function joinNonEmpty_(arr) {
+  return arr.map(v => text_(v)).filter(Boolean).join('\n');
+}
+
+function splitLines_(value) {
+  return String(value || '').split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+}
+
+/* =====================================================================
+ * ผู้ใช้และสิทธิ
+ * ===================================================================*/
+
+const HEAVY_USER_COLUMNS = ['SignatureBase64', 'SignatureBase64_2', 'Avatar'];
+
+/**
+ * อ่าน UserAccounts โดยข้ามคอลัมน์รูปภาพขนาดใหญ่ เพื่อให้โหลดเร็ว
+ */
+function getAllUsers_() {
+  if (cachedTableData_.__users) return cachedTableData_.__users;
+  const sh = getSS_().getSheetByName(CONFIG.USER_SHEET);
+  if (!sh || sh.getLastRow() < 2) { cachedTableData_.__users = []; return []; }
+
+  const headers = getHeaders_(sh);
+  const lastRow = sh.getLastRow();
+  const skip = {};
+  HEAVY_USER_COLUMNS.forEach(name => {
+    const i = headers.indexOf(name);
+    if (i > -1) skip[i] = true;
+  });
+
+  // อ่านเป็นช่วงคอลัมน์ที่ติดกัน ข้ามคอลัมน์หนัก
+  const blocks = [];
+  let start = -1;
+  for (let c = 0; c <= headers.length; c++) {
+    if (c < headers.length && !skip[c]) {
+      if (start === -1) start = c;
+    } else if (start > -1) {
+      blocks.push([start, c - 1]);
+      start = -1;
+    }
+  }
+
+  const rows = [];
+  for (let r = 0; r < lastRow - 1; r++) rows.push({ _rowNumber: r + 2 });
+  blocks.forEach(b => {
+    const width = b[1] - b[0] + 1;
+    const values = sh.getRange(2, b[0] + 1, lastRow - 1, width).getDisplayValues();
+    values.forEach((row, r) => {
+      for (let c = 0; c < width; c++) rows[r][headers[b[0] + c]] = text_(row[c]);
+    });
+  });
+
+  cachedTableData_.__users = rows;
+  return rows;
+}
+
+function getUserById_(userId) {
+  const id = text_(userId);
+  if (!id) return null;
+  return getAllUsers_().find(u => text_(u.UserID) === id) || null;
+}
+
+/** อ่านลายเซ็นเฉพาะคนที่ต้องใช้ เพื่อไม่ต้องโหลด base64 ทั้งแผ่น */
+function getUserSignature_(userId) {
+  const user = getUserById_(userId);
+  if (!user) return '';
+  const sh = getSS_().getSheetByName(CONFIG.USER_SHEET);
+  const headers = getHeaders_(sh);
+  const col = headers.indexOf('SignatureBase64') + 1;
+  if (col < 1) return '';
+  return text_(sh.getRange(user._rowNumber, col).getDisplayValue());
+}
+
+function safeUser_(u, roleConfig) {
+  const cfg = roleConfig || getRoleConfig_();
+  const userId = text_(u.UserID);
+  return {
+    userId: userId,
+    username: text_(u.Username),
+    fullName: text_(u.FullName),
+    position: [text_(u.Position), text_(u.PositionLevel)].filter(Boolean).join(''),
+    department: text_(u.Department),
+    role: text_(u.Role),
+    cid: text_(u.CID),
+    email: text_(u.Email),
+    phone: normalizePhone_(u.PhoneNumber || u.Phone || ''),
+    isSupply: cfg.supplyIds.indexOf(userId) > -1,
+    isSupplyHead: cfg.supplyHeadIds.indexOf(userId) > -1,
+    isSuperAdmin: cfg.superAdminIds.indexOf(userId) > -1,
+    isExecutive: isExecutiveRole_(u),
+    isDeptHead: isDeptHeadRole_(u)
+  };
+}
+
+function isExecutiveRole_(u) {
+  const role = text_(u.Role).toLowerCase();
+  const pos = text_(u.Position).toLowerCase();
+  return role.indexOf('executive') > -1 || pos.indexOf('นายแพทย์สาธารณสุข') > -1 ||
+    pos.indexOf('รองนายแพทย์') > -1 || text_(u.Department) === 'ผู้บริหาร';
+}
+
+function isDeptHeadRole_(u) {
+  const role = text_(u.Role).toLowerCase();
+  return role.indexOf('depthead') > -1 || role.indexOf('teamlead') > -1 || role.indexOf('deputydepthead') > -1;
+}
+
+/**
+ * รายชื่อผู้มีสิทธิพิเศษ อ่านจากแผ่น setting (admin กำหนดเองในหน้า Setting)
+ * ถ้ายังไม่เคยตั้งค่า จะ fallback ไปใช้ Role เดิมเพื่อไม่ให้ระบบล็อกตัวเอง
+ */
+function getRoleConfig_() {
+  if (cachedTableData_.__roleConfig) return cachedTableData_.__roleConfig;
+
+  const rows = getTableRows_(CONFIG.SETTING_SHEET).filter(r => isTrue_(r.IsActive));
+  const pick = cat => rows.filter(r => text_(r.Category) === cat).map(r => text_(r.Value)).filter(Boolean);
+
+  let supplyIds = pick(ROLE_CATEGORIES.SUPPLY_OFFICER);
+  let supplyHeadIds = pick(ROLE_CATEGORIES.SUPPLY_HEAD);
+  let superAdminIds = pick(ROLE_CATEGORIES.SUPER_ADMIN);
+
+  if (!superAdminIds.length) {
+    superAdminIds = getAllUsers_()
+      .filter(u => /admin/i.test(text_(u.Role)))
+      .map(u => text_(u.UserID));
+  }
+  if (!supplyIds.length) {
+    supplyIds = getAllUsers_()
+      .filter(u => /พัสดุ/.test(text_(u.Position) + text_(u.Department) + text_(u.Role)))
+      .map(u => text_(u.UserID));
+  }
+
+  // หัวหน้าเจ้าหน้าที่และ superadmin ถือว่ามีสิทธิของเจ้าหน้าที่พัสดุด้วย
+  const all = supplyIds.concat(supplyHeadIds).concat(superAdminIds)
+    .filter((v, i, a) => v && a.indexOf(v) === i);
+
+  const cfg = {
+    supplyIds: all,
+    supplyOfficerIds: supplyIds,
+    supplyHeadIds: supplyHeadIds,
+    superAdminIds: superAdminIds
+  };
+  cachedTableData_.__roleConfig = cfg;
+  return cfg;
+}
+
+function isSupply_(user) {
+  return getRoleConfig_().supplyIds.indexOf(text_(user.UserID)) > -1;
+}
+
+function isSuperAdmin_(user) {
+  return getRoleConfig_().superAdminIds.indexOf(text_(user.UserID)) > -1;
+}
+
+function requireSupply_(user) {
+  if (!isSupply_(user)) throw new Error('เฉพาะเจ้าหน้าที่พัสดุที่ผู้ดูแลระบบกำหนดไว้เท่านั้นที่ทำรายการนี้ได้');
+  return user;
+}
+
+function requireSuperAdmin_(user) {
+  if (!isSuperAdmin_(user)) throw new Error('เฉพาะผู้ดูแลระบบ (Super Admin) เท่านั้นที่ทำรายการนี้ได้');
+  return user;
+}
+
+function canSeeAll_(user) {
+  return isSupply_(user) || isSuperAdmin_(user) || isExecutiveRole_(user);
+}
+
+function canSeeDepartment_(user) {
+  return isDeptHeadRole_(user);
+}
+
+/* =====================================================================
+ * Session / Token
+ * ===================================================================*/
+
+function apiLogin_(p) {
+  setupSupplySystem();
+  const username = text_(p.username);
+  const password = text_(p.password);
+  if (!username || !password) throw new Error('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
+
+  const user = getAllUsers_().find(u => text_(u.Username) === username && text_(u.Password) === password);
+  if (!user) throw new Error('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
+  if (!isTrue_(user.IsActive)) throw new Error('บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ');
+
+  const token = createSession_(user, text_(p.client));
+  addLog_(user, 'LOGIN', '', 'เข้าสู่ระบบ');
+  return {
+    ok: true,
+    token: token,
+    expiresIn: CONFIG.SESSION_HOURS * 3600,
+    user: safeUser_(user)
+  };
+}
+
+function apiLogout_(p) {
+  const token = text_(p.token);
+  if (!token) return { ok: true };
+  const sh = getSS_().getSheetByName(CONFIG.SESSION_SHEET);
+  if (!sh || sh.getLastRow() < 2) return { ok: true };
+  const values = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
+  for (let i = values.length - 1; i >= 0; i--) {
+    if (String(values[i][0]) === token) sh.deleteRow(i + 2);
+  }
+  return { ok: true, message: 'ออกจากระบบแล้ว' };
+}
+
+function createSession_(user, client) {
+  const sh = getSS_().getSheetByName(CONFIG.SESSION_SHEET);
+  const headers = getHeaders_(sh);
+  const token = Utilities.getUuid().replace(/-/g, '') + Utilities.getUuid().slice(0, 8);
   const now = new Date();
-  const ymd = Utilities.formatDate(now, CONFIG.TIMEZONE, 'yyyyMMdd');
+  const expires = new Date(now.getTime() + CONFIG.SESSION_HOURS * 3600 * 1000);
+  appendObjectRow_(sh, headers, {
+    Token: token,
+    UserID: text_(user.UserID),
+    UserName: text_(user.FullName),
+    CreatedAt: now,
+    ExpiresAt: expires,
+    Client: text_(client).slice(0, 200)
+  });
+  clearTableCache_(CONFIG.SESSION_SHEET);
+  purgeExpiredSessions_(sh);
+  return token;
+}
+
+function purgeExpiredSessions_(sh) {
+  if (sh.getLastRow() < 2) return;
+  const headers = getHeaders_(sh);
+  const map = getHeaderMap_(headers);
+  const values = sh.getRange(2, 1, sh.getLastRow() - 1, headers.length).getValues();
+  const now = new Date();
+  for (let i = values.length - 1; i >= 0; i--) {
+    const exp = toDate_(values[i][map.ExpiresAt]);
+    if (!exp || exp < now) sh.deleteRow(i + 2);
+  }
+}
+
+function requireAuth_(token) {
+  token = text_(token);
+  if (!token) throw new Error('กรุณาเข้าสู่ระบบก่อนใช้งาน');
+
+  const session = getTableRows_(CONFIG.SESSION_SHEET).find(r => text_(r.Token) === token);
+  if (!session) throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+  const exp = toDate_(session.ExpiresAt);
+  if (!exp || exp < new Date()) throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+
+  const user = getUserById_(session.UserID);
+  if (!user) throw new Error('ไม่พบบัญชีผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
+  if (!isTrue_(user.IsActive)) throw new Error('บัญชีนี้ถูกปิดใช้งาน');
+  return user;
+}
+
+/* =====================================================================
+ * ข้อมูลตั้งต้นหลังเข้าสู่ระบบ
+ * ===================================================================*/
+
+function apiBootstrap_(p) {
+  const user = requireAuth_(p.token);
+  setupSupplySystem();
+  const cfg = getRoleConfig_();
+  const users = getAllUsers_()
+    .filter(u => isTrue_(u.IsActive))
+    .map(u => safeUser_(u, cfg))
+    .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
+
+  const requests = listRequestRows_(user, p.filters || {});
+  return {
+    ok: true,
+    user: safeUser_(user, cfg),
+    users: users,
+    settings: buildSettings_(),
+    requests: requests.map(summarizeRequest_),
+    dashboard: buildDashboard_(requests, {}),
+    meta: {
+      statuses: Object.keys(STATUS).map(k => STATUS[k]),
+      stages: getProcurementStages_(),
+      attachmentTypes: ATTACHMENT_TYPES,
+      budgetTypes: BUDGET_TYPES,
+      serverTime: nowText_()
+    }
+  };
+}
+
+/* =====================================================================
+ * คำขอ
+ * ===================================================================*/
+
+function listRequestRows_(user, filters) {
+  filters = filters || {};
+  const includeHistory = isTrue_(filters.includeHistory);
+  const canAll = canSeeAll_(user);
+  const canDept = canSeeDepartment_(user);
+  const userId = text_(user.UserID);
+  const department = text_(user.Department);
+
+  let rows = getTableRows_(CONFIG.REQUEST_SHEET).filter(r => {
+    if (!includeHistory && String(r.IsLatest) !== '1' && r.IsLatest !== 1 && r.IsLatest !== '') return false;
+    if (!canAll) {
+      if (canDept) {
+        if (text_(r.CreatedByDepartment) !== department && text_(r.CreatedByUserID) !== userId) return false;
+      } else if (text_(r.CreatedByUserID) !== userId) {
+        return false;
+      }
+    }
+    return matchFilters_(r, filters);
+  });
+
+  rows.sort((a, b) => {
+    const da = toDate_(a.CreatedAt), db = toDate_(b.CreatedAt);
+    return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+  });
+  return rows.slice(0, CONFIG.MAX_LIST_ROWS);
+}
+
+function matchFilters_(r, filters) {
+  if (filters.status && normalizeStatus_(r.Status) !== filters.status) return false;
+  if (filters.department && text_(r.Department) !== text_(filters.department)) return false;
+  if (filters.budgetType && text_(r.BudgetType) !== text_(filters.budgetType)) return false;
+  if (filters.purchaseType && text_(r.PurchaseType) !== text_(filters.purchaseType)) return false;
+  if (filters.stage && text_(r.CurrentStage) !== text_(filters.stage)) return false;
+  if (filters.fiscalYear && String(r.FiscalYear) !== String(filters.fiscalYear)) return false;
+  if (filters.dateFrom) {
+    const d = toDate_(r.RequestDate) || toDate_(r.CreatedAt);
+    const from = toDate_(filters.dateFrom);
+    if (d && from && d < from) return false;
+  }
+  if (filters.dateTo) {
+    const d = toDate_(r.RequestDate) || toDate_(r.CreatedAt);
+    const to = toDate_(filters.dateTo);
+    if (d && to && d > new Date(to.getTime() + 86399000)) return false;
+  }
+  if (filters.keyword) {
+    const key = String(filters.keyword).toLowerCase();
+    const joined = [r.RequestNo, r.Subject, r.CreatedByName, r.Department, r.Reason, r.Status, r.CurrentStage]
+      .join(' ').toLowerCase();
+    if (joined.indexOf(key) === -1) return false;
+  }
+  return true;
+}
+
+function summarizeRequest_(r) {
+  return {
+    requestId: r.RequestID,
+    requestNo: r.RequestNo,
+    rootRequestId: r.RootRequestID,
+    version: num_(r.Version) || 1,
+    requestDate: r.RequestDate,
+    createdAt: r.CreatedAt,
+    updatedAt: r.UpdatedAt,
+    subject: r.Subject,
+    department: r.Department,
+    requester: r.CreatedByName,
+    requesterId: r.CreatedByUserID,
+    totalAmount: num_(r.TotalAmount),
+    status: normalizeStatus_(r.Status),
+    purchaseType: text_(r.PurchaseType),
+    budgetType: text_(r.BudgetType),
+    budgetSource: text_(r.PlanBudgetSource),
+    fiscalYear: text_(r.FiscalYear),
+    currentStage: text_(r.CurrentStage),
+    currentStageAt: r.CurrentStageAt,
+    submittedAt: r.SubmittedAt,
+    checkedAt: r.CheckedAt,
+    approvedAt: r.ApprovedAt,
+    completedAt: r.CompletedAt,
+    returnRemark: text_(r.ReturnRemark),
+    isLocked: bool01_(r.IsLocked) === 1
+  };
+}
+
+function apiListRequests_(p) {
+  const user = requireAuth_(p.token);
+  const rows = listRequestRows_(user, p.filters || {});
+  return { ok: true, requests: rows.map(summarizeRequest_) };
+}
+
+function apiGetRequest_(p) {
+  const user = requireAuth_(p.token);
+  const request = findRequest_(p.requestId);
+  assertCanView_(user, request);
+
+  const detail = Object.assign({}, request);
+  detail.Status = normalizeStatus_(detail.Status);
+  detail.Phone = normalizePhone_(detail.Phone || detail.CreatedByPhone);
+
+  const items = getTableRows_(CONFIG.ITEM_SHEET)
+    .filter(r => text_(r.RequestID) === text_(p.requestId))
+    .sort((a, b) => num_(a.LineNo) - num_(b.LineNo));
+  const inspectors = getTableRows_(CONFIG.INSPECTOR_SHEET)
+    .filter(r => text_(r.RequestID) === text_(p.requestId))
+    .sort((a, b) => num_(a.Seq) - num_(b.Seq));
+
+  const versions = getTableRows_(CONFIG.REQUEST_SHEET)
+    .filter(r => text_(r.RootRequestID) === text_(request.RootRequestID || request.RequestID))
+    .sort((a, b) => num_(a.Version) - num_(b.Version))
+    .map(r => ({
+      requestId: r.RequestID,
+      requestNo: r.RequestNo,
+      version: num_(r.Version) || 1,
+      status: normalizeStatus_(r.Status),
+      createdAt: r.CreatedAt,
+      returnRemark: text_(r.ReturnRemark),
+      isLatest: bool01_(r.IsLatest) === 1
+    }));
+
+  return {
+    ok: true,
+    request: detail,
+    items: items,
+    inspectors: inspectors,
+    versions: versions,
+    progress: readProgress_(p.requestId, user),
+    permissions: requestPermissions_(user, request),
+    creatorSignature: getUserSignature_(request.CreatedByUserID)
+  };
+}
+
+function findRequest_(requestId) {
+  const row = getTableRows_(CONFIG.REQUEST_SHEET).find(r => text_(r.RequestID) === text_(requestId));
+  if (!row) throw new Error('ไม่พบคำขอที่ต้องการ');
+  return row;
+}
+
+function assertCanView_(user, request) {
+  if (canSeeAll_(user)) return;
+  const userId = text_(user.UserID);
+  if (text_(request.CreatedByUserID) === userId) return;
+  if (canSeeDepartment_(user) && text_(request.CreatedByDepartment) === text_(user.Department)) return;
+  throw new Error('คุณไม่มีสิทธิเข้าถึงคำขอนี้');
+}
+
+function requestPermissions_(user, request) {
+  const status = normalizeStatus_(request.Status);
+  const isOwner = text_(request.CreatedByUserID) === text_(user.UserID);
+  const supply = isSupply_(user);
+  const locked = bool01_(request.IsLocked) === 1;
+  const latest = bool01_(request.IsLatest) === 1;
+
+  return {
+    canEdit: latest && !locked && (isOwner || supply) &&
+      (status === STATUS.DRAFT || status === STATUS.RETURNED),
+    canSubmit: latest && !locked && isOwner && (status === STATUS.DRAFT || status === STATUS.RETURNED),
+    canReview: latest && supply && status === STATUS.SUBMITTED,
+    canDownload: latest && (status === STATUS.CHECKED || status === STATUS.APPROVED ||
+      status === STATUS.IN_PROGRESS || status === STATUS.COMPLETED),
+    canAttachApproval: latest && supply && status === STATUS.CHECKED,
+    canUnlock: supply && locked,
+    canAddProgress: latest && supply && (status === STATUS.APPROVED ||
+      status === STATUS.IN_PROGRESS || status === STATUS.COMPLETED),
+    canCancel: latest && !locked && (isOwner || supply) && status !== STATUS.CANCELLED,
+    isOwner: isOwner,
+    isSupply: supply
+  };
+}
+
+function normalizeStatus_(status) {
+  const s = text_(status);
+  const legacy = {
+    '': STATUS.DRAFT,
+    'Draft': STATUS.DRAFT,
+    'Submitted': STATUS.SUBMITTED,
+    'ส่งให้พัสดุตรวจสอบ': STATUS.SUBMITTED,
+    'Checked': STATUS.CHECKED,
+    'ApprovedForPrint': STATUS.CHECKED,
+    'Returned': STATUS.RETURNED,
+    'Cancelled': STATUS.CANCELLED,
+    'อนุมัติแล้ว (ล็อก)': STATUS.APPROVED
+  };
+  return legacy[s] !== undefined ? legacy[s] : s;
+}
+
+/* ---------------------- บันทึกคำขอ / เวอร์ชัน ---------------------- */
+
+function apiSaveRequest_(p) {
+  const user = requireAuth_(p.token);
+  setupSupplySystem();
+  const payload = p.payload || {};
+
+  if (!text_(payload.subject)) throw new Error('กรุณากรอกเรื่องที่ขอความเห็นชอบซื้อหรือจ้าง');
+  if (!text_(payload.reason)) throw new Error('กรุณากรอกเหตุผลและความจำเป็น');
+  const items = sanitizeItems_(payload.items);
+  if (!items.length) throw new Error('กรุณาเพิ่มรายการพัสดุอย่างน้อย 1 รายการ');
+
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    return saveRequestInternal_(user, payload, items, isTrue_(p.submit));
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+function saveRequestInternal_(user, payload, items, alsoSubmit) {
+  const now = new Date();
+  const sh = getSS_().getSheetByName(CONFIG.REQUEST_SHEET);
+  const headers = getHeaders_(sh);
+  const all = getTableRows_(CONFIG.REQUEST_SHEET);
+  const existing = payload.requestId ? all.find(r => text_(r.RequestID) === text_(payload.requestId)) : null;
+
+  let mode = 'create';
+  if (existing) {
+    const status = normalizeStatus_(existing.Status);
+    if (bool01_(existing.IsLocked) === 1) {
+      throw new Error('คำขอนี้ถูกล็อกหลังได้รับอนุมัติแล้ว ต้องให้เจ้าหน้าที่พัสดุปลดล็อกก่อนจึงจะแก้ไขได้');
+    }
+    if (text_(existing.CreatedByUserID) !== text_(user.UserID) && !isSupply_(user)) {
+      throw new Error('คุณไม่มีสิทธิแก้ไขคำขอนี้');
+    }
+    if (status === STATUS.RETURNED) mode = 'newVersion';
+    else if (status === STATUS.DRAFT) mode = 'update';
+    else throw new Error('คำขอสถานะ "' + status + '" ไม่สามารถแก้ไขได้');
+  }
+
+  const profile = safeUser_(user);
+  const requestId = mode === 'update' ? existing.RequestID : makeId_('REQ');
+  const baseNo = existing ? String(existing.RequestNo).replace(/-v\d+$/, '') : makeRequestNo_();
+  const version = mode === 'newVersion' ? num_(existing.Version) + 1 : (existing ? num_(existing.Version) || 1 : 1);
+  const requestNo = version > 1 ? baseNo + '-v' + version : baseNo;
+  const rootId = existing ? text_(existing.RootRequestID) || text_(existing.RequestID) : requestId;
+
+  const totalAmount = items.reduce((s, it) => s + num_(it.TotalPrice), 0);
+  const lastTotal = items.reduce((s, it) => s + num_(it.LastPrice), 0);
+  const requestDate = toDate_(payload.requestDate) || now;
+
+  const record = {
+    RequestID: requestId,
+    RequestNo: requestNo,
+    RootRequestID: rootId,
+    ParentRequestID: mode === 'newVersion' ? existing.RequestID : (existing ? text_(existing.ParentRequestID) : ''),
+    Version: version,
+    IsLatest: 1,
+    CreatedAt: mode === 'update' ? existing.CreatedAt : now,
+    UpdatedAt: now,
+    CreatedByUserID: existing ? existing.CreatedByUserID : text_(user.UserID),
+    CreatedByName: existing ? existing.CreatedByName : profile.fullName,
+    CreatedByPosition: existing ? existing.CreatedByPosition : profile.position,
+    CreatedByDepartment: existing ? existing.CreatedByDepartment : profile.department,
+    CreatedByPhone: normalizePhone_(existing ? existing.CreatedByPhone : profile.phone),
+    CreatedByEmail: existing ? existing.CreatedByEmail : profile.email,
+    Department: text_(payload.department) || profile.department,
+    Phone: normalizePhone_(payload.phone || profile.phone),
+    DocNoText: text_(payload.docNoText) || 'นย',
+    RequestDate: requestDate,
+    Subject: text_(payload.subject),
+    To: text_(payload.to) || 'นายแพทย์สาธารณสุขจังหวัดนครนายก',
+    PurchaseType: text_(payload.purchaseType) || 'ซื้อ',
+    ItemCount: items.length,
+    Reason: text_(payload.reason),
+    PurposeRegular: bool01_(payload.purposeRegular),
+    PurposeStock: bool01_(payload.purposeStock),
+    PurposeProject: bool01_(payload.purposeProject),
+    ProjectName: text_(payload.projectName),
+    TotalAmount: totalAmount,
+    LastPurchaseTotal: lastTotal,
+    Status: mode === 'newVersion' ? STATUS.DRAFT : (existing ? normalizeStatus_(existing.Status) : STATUS.DRAFT),
+    SubmittedAt: '', SubmittedByUserID: '', SubmittedByName: '',
+    CheckedAt: '', CheckedByUserID: '', CheckedByName: '', CheckRemark: '',
+    ReturnedAt: '', ReturnedByUserID: '', ReturnedByName: '', ReturnRemark: '',
+    ReturnCount: existing ? num_(existing.ReturnCount) : 0,
+    OfficerOpinionAnnualUnder100k: bool01_(payload.officerOpinionAnnualUnder100k),
+    OfficerOpinionAnnualOver100k: bool01_(payload.officerOpinionAnnualOver100k),
+    OfficerMethod: text_(payload.officerMethod) || 'เฉพาะเจาะจง',
+    OfficerMethodInProgress: bool01_(payload.officerMethodInProgress),
+    OfficerInProgressMethod: text_(payload.officerInProgressMethod),
+    CompletionDays: num_(payload.completionDays),
+    OfficerReason: text_(payload.officerReason) || 'เนื่องจากมีความจำเป็นต้องใช้ในงานราชการของ สสจ.นครนายก',
+    OfficerName: text_(payload.officerName),
+    OfficerPosition: text_(payload.officerPosition),
+    DeptHeadName: text_(payload.deptHeadName),
+    DeptHeadPosition: text_(payload.deptHeadPosition),
+    BudgetType: text_(payload.budgetType) || budgetTypeFromSource_(payload.planBudgetSource),
+    PlanInPlan: bool01_(payload.planInPlan),
+    PlanYear: text_(payload.planYear),
+    PlanOther: text_(payload.planOther),
+    PlanBudgetSource: text_(payload.planBudgetSource),
+    PlanAmount: num_(payload.planAmount) || totalAmount,
+    PlanRemark: text_(payload.planRemark),
+    FiscalYear: fiscalYear_(requestDate),
+    ApproverName: text_(payload.approverName),
+    ApproverPosition: text_(payload.approverPosition) || 'นายแพทย์สาธารณสุขจังหวัดนครนายก',
+    Notes: text_(payload.notes),
+    ApprovedAt: '', ApprovedByUserID: '', ApprovedByName: '', ApprovedRemark: '',
+    ApprovedDocFileNames: '', ApprovedDocFileUrls: '', ApprovedDocFileIds: '',
+    IsLocked: 0, LockedAt: '', LockedByUserID: '', LockedByName: '',
+    UnlockedAt: '', UnlockedByUserID: '', UnlockedByName: '', UnlockReason: '',
+    CurrentStage: '', CurrentStageAt: '', CompletedAt: '',
+    MainPdfFileId: '', MainPdfUrl: ''
+  };
+
+  // ไฟล์แนบ 5 ประเภท — เวอร์ชันใหม่จะสืบทอดไฟล์เดิมมาให้ แก้ไขหรือลบทีหลังได้
+  const attachments = payload.attachments || {};
+  ATTACHMENT_TYPES.forEach(type => {
+    const input = attachments[type.key] || {};
+    const source = mode === 'create' ? null : existing;
+    const merged = mergeAttachment_(source, type.key, input, requestNo);
+    record['Attachment' + type.key] = merged.checked;
+    record['Attachment' + type.key + 'Sheets'] = merged.sheets;
+    record['Attachment' + type.key + 'FileNames'] = merged.names;
+    record['Attachment' + type.key + 'FileUrls'] = merged.urls;
+    record['Attachment' + type.key + 'FileIds'] = merged.ids;
+  });
+
+  if (mode === 'update') {
+    writeObjectRow_(sh, headers, record, existing._rowNumber);
+    deleteRowsByValue_(CONFIG.ITEM_SHEET, 'RequestID', requestId);
+    deleteRowsByValue_(CONFIG.INSPECTOR_SHEET, 'RequestID', requestId);
+  } else {
+    if (mode === 'newVersion') {
+      updateRequestRow_(existing.RequestID, { IsLatest: 0, Status: STATUS.SUPERSEDED, UpdatedAt: now });
+      record.ReturnCount = num_(existing.ReturnCount);
+    }
+    appendObjectRow_(sh, headers, record);
+  }
+  clearTableCache_(CONFIG.REQUEST_SHEET);
+
+  const itemSheet = getSS_().getSheetByName(CONFIG.ITEM_SHEET);
+  appendObjectRows_(itemSheet, getHeaders_(itemSheet), items.map((it, i) => Object.assign({}, it, {
+    LineID: makeId_('LINE'), RequestID: requestId, LineNo: i + 1
+  })));
+
+  const inspectors = sanitizeInspectors_(payload.inspectors);
+  const insSheet = getSS_().getSheetByName(CONFIG.INSPECTOR_SHEET);
+  appendObjectRows_(insSheet, getHeaders_(insSheet), inspectors.map((ins, i) => Object.assign({}, ins, {
+    InspectorID: makeId_('INS'), RequestID: requestId, Seq: i + 1
+  })));
+  clearTableCache_(CONFIG.ITEM_SHEET);
+  clearTableCache_(CONFIG.INSPECTOR_SHEET);
+
+  addLog_(user, mode === 'create' ? 'CREATE_REQUEST' : (mode === 'newVersion' ? 'CREATE_VERSION' : 'UPDATE_REQUEST'),
+    requestId, requestNo + ' (v' + version + ')');
+
+  let message = mode === 'newVersion'
+    ? 'บันทึกเป็นคำขอเวอร์ชันที่ ' + version + ' เรียบร้อยแล้ว'
+    : 'บันทึกคำขอเรียบร้อยแล้ว';
+
+  let submitResult = null;
+  if (alsoSubmit) {
+    submitResult = submitRequestInternal_(user, requestId);
+    message = submitResult.message;
+  }
+
+  return {
+    ok: true,
+    requestId: requestId,
+    requestNo: requestNo,
+    version: version,
+    mode: mode,
+    message: message,
+    status: submitResult ? STATUS.SUBMITTED : record.Status
+  };
+}
+
+function sanitizeItems_(items) {
+  return (items || [])
+    .filter(it => it && text_(it.itemName))
+    .map(it => {
+      const quantity = num_(it.quantity);
+      const unitPrice = num_(it.unitPrice);
+      return {
+        ItemName: text_(it.itemName),
+        PlanBalanceAmount: num_(it.planBalanceAmount),
+        Quantity: quantity,
+        Unit: text_(it.unit),
+        UnitPrice: unitPrice,
+        TotalPrice: num_(it.totalPrice) || quantity * unitPrice,
+        LastPrice: num_(it.lastPrice),
+        Remark: text_(it.remark)
+      };
+    });
+}
+
+function sanitizeInspectors_(inspectors) {
+  return (inspectors || [])
+    .filter(ins => ins && text_(ins.fullName))
+    .slice(0, 5)
+    .map(ins => ({
+      FullName: text_(ins.fullName),
+      Position: text_(ins.position),
+      CID: text_(ins.cid),
+      Email: text_(ins.email),
+      UserID: text_(ins.userId)
+    }));
+}
+
+function makeRequestNo_() {
+  const ymd = Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyyMMdd');
   const prefix = 'PR' + ymd;
   const rows = getTableRows_(CONFIG.REQUEST_SHEET);
   const count = rows.filter(r => String(r.RequestNo || '').indexOf(prefix) === 0).length + 1;
   return prefix + '-' + ('000' + count).slice(-3);
 }
+
+function updateRequestRow_(requestId, fields) {
+  const sh = getSS_().getSheetByName(CONFIG.REQUEST_SHEET);
+  const headers = getHeaders_(sh);
+  const map = getHeaderMap_(headers);
+  const row = getTableRows_(CONFIG.REQUEST_SHEET).find(r => text_(r.RequestID) === text_(requestId));
+  if (!row) throw new Error('ไม่พบคำขอที่ต้องการปรับปรุง');
+
+  const range = sh.getRange(row._rowNumber, 1, 1, headers.length);
+  const values = range.getValues()[0];
+  Object.keys(fields).forEach(k => {
+    if (map[k] !== undefined) values[map[k]] = fields[k];
+  });
+  range.setValues([values]);
+  clearTableCache_(CONFIG.REQUEST_SHEET);
+}
+
+/* ---------------------- ส่ง / ตรวจสอบ / ยกเลิก ---------------------- */
+
+function apiSubmitRequest_(p) {
+  const user = requireAuth_(p.token);
+  return submitRequestInternal_(user, p.requestId);
+}
+
+function submitRequestInternal_(user, requestId) {
+  const request = findRequest_(requestId);
+  if (text_(request.CreatedByUserID) !== text_(user.UserID) && !isSupply_(user)) {
+    throw new Error('ส่งคำขอได้เฉพาะผู้สร้างคำขอเท่านั้น');
+  }
+  const status = normalizeStatus_(request.Status);
+  if (status !== STATUS.DRAFT && status !== STATUS.RETURNED) {
+    throw new Error('ส่งให้พัสดุตรวจสอบได้เฉพาะคำขอสถานะ "ร่าง" หรือ "ส่งกลับแก้ไข"');
+  }
+
+  ATTACHMENT_TYPES.filter(t => t.required).forEach(t => {
+    if (!text_(request['Attachment' + t.key + 'FileIds'])) {
+      throw new Error('ต้องแนบไฟล์ "' + t.label + '" ก่อนส่งให้เจ้าหน้าที่พัสดุตรวจสอบ');
+    }
+  });
+
+  const now = new Date();
+  updateRequestRow_(requestId, {
+    Status: STATUS.SUBMITTED,
+    UpdatedAt: now,
+    SubmittedAt: now,
+    SubmittedByUserID: text_(user.UserID),
+    SubmittedByName: text_(user.FullName)
+  });
+
+  addLog_(user, 'SUBMIT_REQUEST', requestId, text_(request.RequestNo));
+  writeProgress_(user, requestId, {
+    progressStatus: STATUS.SUBMITTED,
+    note: 'ส่งคำขอให้เจ้าหน้าที่พัสดุตรวจสอบ'
+  });
+  notifySupplyOfficers_(request, user);
+
+  return { ok: true, message: 'ส่งคำขอให้เจ้าหน้าที่พัสดุตรวจสอบเรียบร้อยแล้ว', status: STATUS.SUBMITTED };
+}
+
+function apiReviewRequest_(p) {
+  const user = requireAuth_(p.token);
+  requireSupply_(user);
+  const request = findRequest_(p.requestId);
+  const status = normalizeStatus_(request.Status);
+  if (status !== STATUS.SUBMITTED) {
+    throw new Error('ตรวจสอบได้เฉพาะคำขอที่อยู่ในสถานะ "' + STATUS.SUBMITTED + '"');
+  }
+
+  const now = new Date();
+  const remark = text_(p.remark);
+  const pass = text_(p.result) === 'pass';
+
+  if (!pass && !remark) throw new Error('กรุณาระบุเหตุผลที่ส่งกลับแก้ไข');
+
+  if (pass) {
+    updateRequestRow_(p.requestId, {
+      Status: STATUS.CHECKED,
+      UpdatedAt: now,
+      CheckedAt: now,
+      CheckedByUserID: text_(user.UserID),
+      CheckedByName: text_(user.FullName),
+      CheckRemark: remark || 'ผ่านการตรวจสอบ'
+    });
+    addLog_(user, 'REVIEW_PASS', p.requestId, remark || 'ผ่านการตรวจสอบ');
+    writeProgress_(user, p.requestId, {
+      progressStatus: STATUS.CHECKED,
+      note: remark || 'ตรวจสอบเอกสารครบถ้วน ผู้ยื่นคำขอดาวน์โหลด PDF/Word ไปเสนอในระบบ SMO ได้'
+    });
+    notifyRequester_(request, 'ผ่านการตรวจสอบ',
+      'เอกสารคำขอ ' + request.RequestNo + ' ผ่านการตรวจสอบแล้ว กรุณาดาวน์โหลดไฟล์ PDF และ Word ไปเสนอในระบบ SMO');
+    return { ok: true, message: 'บันทึกผลผ่านการตรวจสอบเรียบร้อยแล้ว', status: STATUS.CHECKED };
+  }
+
+  updateRequestRow_(p.requestId, {
+    Status: STATUS.RETURNED,
+    UpdatedAt: now,
+    ReturnedAt: now,
+    ReturnedByUserID: text_(user.UserID),
+    ReturnedByName: text_(user.FullName),
+    ReturnRemark: remark,
+    ReturnCount: num_(request.ReturnCount) + 1
+  });
+  addLog_(user, 'REVIEW_RETURN', p.requestId, remark);
+  writeProgress_(user, p.requestId, { progressStatus: STATUS.RETURNED, note: remark });
+  notifyRequester_(request, 'ส่งกลับแก้ไข',
+    'คำขอ ' + request.RequestNo + ' ถูกส่งกลับให้แก้ไข เหตุผล: ' + remark);
+
+  return { ok: true, message: 'ส่งกลับให้ผู้ยื่นคำขอแก้ไขเรียบร้อยแล้ว', status: STATUS.RETURNED };
+}
+
+function apiCancelRequest_(p) {
+  const user = requireAuth_(p.token);
+  const request = findRequest_(p.requestId);
+  if (text_(request.CreatedByUserID) !== text_(user.UserID) && !isSupply_(user)) {
+    throw new Error('คุณไม่มีสิทธิยกเลิกคำขอนี้');
+  }
+  if (bool01_(request.IsLocked) === 1) throw new Error('คำขอถูกล็อกอยู่ ไม่สามารถยกเลิกได้');
+
+  updateRequestRow_(p.requestId, { Status: STATUS.CANCELLED, UpdatedAt: new Date() });
+  addLog_(user, 'CANCEL_REQUEST', p.requestId, text_(p.remark));
+  writeProgress_(user, p.requestId, { progressStatus: STATUS.CANCELLED, note: text_(p.remark) || 'ยกเลิกคำขอ' });
+  return { ok: true, message: 'ยกเลิกคำขอเรียบร้อยแล้ว', status: STATUS.CANCELLED };
+}
+
+/* ---------------------- แนบเอกสารอนุมัติและล็อก ---------------------- */
+
+function apiAttachApproval_(p) {
+  const user = requireAuth_(p.token);
+  requireSupply_(user);
+  const request = findRequest_(p.requestId);
+  const status = normalizeStatus_(request.Status);
+  if (status !== STATUS.CHECKED && status !== STATUS.APPROVED) {
+    throw new Error('แนบเอกสารที่ลงนามอนุมัติได้หลังคำขอผ่านการตรวจสอบแล้วเท่านั้น');
+  }
+
+  const uploaded = uploadFiles_(p.files || [], request.RequestNo, 'เอกสารอนุมัติ_SMO');
+  if (!uploaded.ids) throw new Error('กรุณาแนบไฟล์เอกสารที่ นพ.สสจ. ลงนามอนุมัติแล้ว');
+
+  const now = new Date();
+  const approvedAt = toDate_(p.approvedAt) || now;
+  updateRequestRow_(p.requestId, {
+    Status: STATUS.APPROVED,
+    UpdatedAt: now,
+    ApprovedAt: approvedAt,
+    ApprovedByUserID: text_(user.UserID),
+    ApprovedByName: text_(user.FullName),
+    ApprovedRemark: text_(p.remark),
+    ApprovedDocFileNames: joinNonEmpty_([request.ApprovedDocFileNames, uploaded.names]),
+    ApprovedDocFileUrls: joinNonEmpty_([request.ApprovedDocFileUrls, uploaded.urls]),
+    ApprovedDocFileIds: joinNonEmpty_([request.ApprovedDocFileIds, uploaded.ids]),
+    IsLocked: 1,
+    LockedAt: now,
+    LockedByUserID: text_(user.UserID),
+    LockedByName: text_(user.FullName)
+  });
+
+  addLog_(user, 'ATTACH_APPROVAL', p.requestId, 'แนบเอกสารอนุมัติและล็อกคำขอ');
+  writeProgress_(user, p.requestId, {
+    progressStatus: STATUS.APPROVED,
+    note: text_(p.remark) || 'นพ.สสจ. ลงนามอนุมัติในระบบ SMO เรียบร้อย แนบเอกสารเป็นหลักฐานและล็อกข้อมูล',
+    fileNames: uploaded.names, fileUrls: uploaded.urls, fileIds: uploaded.ids
+  });
+  notifyRequester_(request, 'ได้รับอนุมัติแล้ว',
+    'คำขอ ' + request.RequestNo + ' ได้รับอนุมัติเรียบร้อยแล้ว เจ้าหน้าที่พัสดุจะเริ่มดำเนินการจัดซื้อจัดจ้างต่อไป');
+
+  return { ok: true, message: 'บันทึกเอกสารอนุมัติและล็อกคำขอเรียบร้อยแล้ว', status: STATUS.APPROVED };
+}
+
+function apiSetLock_(p) {
+  const user = requireAuth_(p.token);
+  requireSupply_(user);
+  findRequest_(p.requestId);
+  const lock = isTrue_(p.locked);
+  const reason = text_(p.reason);
+  if (!lock && !reason) throw new Error('กรุณาระบุเหตุผลในการปลดล็อก');
+
+  const now = new Date();
+  const fields = lock
+    ? { IsLocked: 1, LockedAt: now, LockedByUserID: text_(user.UserID), LockedByName: text_(user.FullName) }
+    : { IsLocked: 0, UnlockedAt: now, UnlockedByUserID: text_(user.UserID), UnlockedByName: text_(user.FullName), UnlockReason: reason };
+  fields.UpdatedAt = now;
+  updateRequestRow_(p.requestId, fields);
+
+  addLog_(user, lock ? 'LOCK_REQUEST' : 'UNLOCK_REQUEST', p.requestId, reason);
+  writeProgress_(user, p.requestId, {
+    progressStatus: lock ? 'ล็อกข้อมูล' : 'ปลดล็อกข้อมูล',
+    note: reason || (lock ? 'ล็อกข้อมูลคำขอ' : 'ปลดล็อกเพื่อแก้ไขข้อมูลให้ตรงกับเอกสารที่ลงนาม')
+  });
+  return { ok: true, message: lock ? 'ล็อกคำขอเรียบร้อยแล้ว' : 'ปลดล็อกคำขอเรียบร้อยแล้ว', isLocked: lock };
+}
+
+/* =====================================================================
+ * ความก้าวหน้า (ข้อ 4, 5, 6)
+ * ===================================================================*/
+
+function apiAddProgress_(p) {
+  const user = requireAuth_(p.token);
+  const request = findRequest_(p.requestId);
+  assertCanView_(user, request);
+
+  const data = p.data || {};
+  const stage = text_(data.progressStatus);
+  if (!stage) throw new Error('กรุณาเลือกขั้นตอนความก้าวหน้า');
+
+  const isStageUpdate = getProcurementStages_().indexOf(stage) > -1;
+  if (isStageUpdate && !isSupply_(user)) {
+    throw new Error('เฉพาะเจ้าหน้าที่พัสดุเท่านั้นที่บันทึกความก้าวหน้าการจัดซื้อจัดจ้างได้');
+  }
+
+  const progressAt = toDate_(data.progressAt) || new Date();
+  const uploaded = uploadFiles_(data.files || [], request.RequestNo, 'ความก้าวหน้า');
+
+  const progress = writeProgress_(user, p.requestId, {
+    progressStatus: stage,
+    progressAt: progressAt,
+    note: text_(data.note),
+    supplyNote: text_(data.supplyNote),
+    myNote: text_(data.myNote),
+    fileNames: uploaded.names, fileUrls: uploaded.urls, fileIds: uploaded.ids
+  });
+
+  if (isStageUpdate) {
+    const fields = {
+      CurrentStage: stage,
+      CurrentStageAt: progressAt,
+      UpdatedAt: new Date()
+    };
+    const status = normalizeStatus_(request.Status);
+    if (stage === FINAL_STAGE) {
+      fields.Status = STATUS.COMPLETED;
+      fields.CompletedAt = progressAt;
+    } else if (status === STATUS.APPROVED) {
+      fields.Status = STATUS.IN_PROGRESS;
+    }
+    updateRequestRow_(p.requestId, fields);
+  }
+
+  addLog_(user, 'ADD_PROGRESS', p.requestId, stage);
+  return {
+    ok: true,
+    message: 'บันทึกความก้าวหน้าเรียบร้อยแล้ว',
+    progressId: progress.ProgressID,
+    progress: readProgress_(p.requestId, user)
+  };
+}
+
+function apiListProgress_(p) {
+  const user = requireAuth_(p.token);
+  const request = findRequest_(p.requestId);
+  assertCanView_(user, request);
+  return { ok: true, progress: readProgress_(p.requestId, user) };
+}
+
+function apiDeleteProgress_(p) {
+  const user = requireAuth_(p.token);
+  const rows = getTableRows_(CONFIG.PROGRESS_SHEET);
+  const row = rows.find(r => text_(r.ProgressID) === text_(p.progressId));
+  if (!row) throw new Error('ไม่พบรายการความก้าวหน้า');
+  if (text_(row.ProgressByUserID) !== text_(user.UserID) && !isSuperAdmin_(user)) {
+    throw new Error('ลบได้เฉพาะรายการที่ตนเองบันทึก หรือผู้ดูแลระบบเท่านั้น');
+  }
+  deleteRowsByValue_(CONFIG.PROGRESS_SHEET, 'ProgressID', p.progressId);
+  addLog_(user, 'DELETE_PROGRESS', row.RequestID, text_(row.ProgressStatus));
+  return { ok: true, message: 'ลบรายการความก้าวหน้าแล้ว', progress: readProgress_(row.RequestID, user) };
+}
+
+function writeProgress_(user, requestId, data) {
+  const request = getTableRows_(CONFIG.REQUEST_SHEET).find(r => text_(r.RequestID) === text_(requestId));
+  const sh = getSS_().getSheetByName(CONFIG.PROGRESS_SHEET);
+  const record = {
+    ProgressID: makeId_('PROG'),
+    RequestID: requestId,
+    RequestNo: request ? text_(request.RequestNo) : '',
+    ProgressAt: data.progressAt || new Date(),
+    ProgressByUserID: text_(user.UserID),
+    ProgressByName: text_(user.FullName),
+    ProgressStatus: text_(data.progressStatus),
+    Note: text_(data.note),
+    SupplyNote: text_(data.supplyNote),
+    MyNote: text_(data.myNote),
+    FileNames: text_(data.fileNames),
+    FileUrls: text_(data.fileUrls),
+    FileIds: text_(data.fileIds),
+    SignerRole: text_(data.signerRole),
+    SignerName: text_(data.signerName),
+    SignatureUrl: text_(data.signatureUrl),
+    CreatedAt: new Date()
+  };
+  appendObjectRow_(sh, getHeaders_(sh), record);
+  clearTableCache_(CONFIG.PROGRESS_SHEET);
+  return record;
+}
+
+/**
+ * คืนรายการความก้าวหน้าโดยกรอง note ตามสิทธิ
+ * - Note       : ทุกคนที่เห็นคำขอ
+ * - SupplyNote : เฉพาะเจ้าหน้าที่พัสดุที่ admin กำหนด
+ * - MyNote     : เฉพาะเจ้าของบันทึก และ superadmin
+ */
+function readProgress_(requestId, viewer) {
+  const supply = isSupply_(viewer);
+  const superAdmin = isSuperAdmin_(viewer);
+  const viewerId = text_(viewer.UserID);
+
+  return getTableRows_(CONFIG.PROGRESS_SHEET)
+    .filter(r => text_(r.RequestID) === text_(requestId))
+    .map(r => {
+      const own = text_(r.ProgressByUserID) === viewerId;
+      return {
+        progressId: r.ProgressID,
+        requestId: r.RequestID,
+        requestNo: r.RequestNo,
+        progressAt: r.ProgressAt,
+        byUserId: r.ProgressByUserID,
+        byName: r.ProgressByName,
+        stage: r.ProgressStatus,
+        note: text_(r.Note),
+        supplyNote: supply ? text_(r.SupplyNote) : '',
+        myNote: (own || superAdmin) ? text_(r.MyNote) : '',
+        canSeeSupplyNote: supply,
+        canSeeMyNote: own || superAdmin,
+        canDelete: own || superAdmin,
+        fileNames: splitLines_(r.FileNames),
+        fileUrls: splitLines_(r.FileUrls)
+      };
+    })
+    .sort((a, b) => {
+      const da = toDate_(a.progressAt), db = toDate_(b.progressAt);
+      return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+    });
+}
+
+function getProcurementStages_() {
+  const custom = getTableRows_(CONFIG.SETTING_SHEET)
+    .filter(r => isTrue_(r.IsActive) && text_(r.Category) === 'ProcurementStage')
+    .sort((a, b) => num_(a.SortOrder) - num_(b.SortOrder))
+    .map(r => text_(r.Value) || text_(r.Label))
+    .filter(Boolean);
+  return custom.length ? custom : PROCUREMENT_STAGES.slice();
+}
+
+/* =====================================================================
+ * ไฟล์แนบ
+ * ===================================================================*/
+
+function mergeAttachment_(existing, key, input, requestNo) {
+  const keepNames = [], keepUrls = [], keepIds = [];
+  const removeIds = (input.removeFileIds || []).map(String);
+
+  if (existing) {
+    const names = splitLines_(existing['Attachment' + key + 'FileNames']);
+    const urls = splitLines_(existing['Attachment' + key + 'FileUrls']);
+    const ids = splitLines_(existing['Attachment' + key + 'FileIds']);
+    ids.forEach((id, i) => {
+      if (removeIds.indexOf(id) > -1) return;
+      keepIds.push(id);
+      keepNames.push(names[i] || id);
+      keepUrls.push(urls[i] || '');
+    });
+  }
+
+  const type = ATTACHMENT_TYPES.find(t => t.key === key);
+  const uploaded = uploadFiles_(input.files || [], requestNo, type ? type.label : key);
+  const names = joinNonEmpty_([keepNames.join('\n'), uploaded.names]);
+  const ids = joinNonEmpty_([keepIds.join('\n'), uploaded.ids]);
+
+  return {
+    checked: ids ? 1 : bool01_(input.checked),
+    sheets: num_(input.sheets),
+    names: names,
+    urls: joinNonEmpty_([keepUrls.join('\n'), uploaded.urls]),
+    ids: ids
+  };
+}
+
+function uploadFiles_(files, requestNo, category) {
+  if (!files || !files.length) return { names: '', urls: '', ids: '' };
+  const folder = getAttachmentFolder_();
+  const names = [], urls = [], ids = [];
+
+  files.forEach((f, idx) => {
+    if (!f || !f.data) return;
+    const data = String(f.data);
+    const match = data.match(/^data:([^;]*);base64,(.+)$/);
+    const base64 = match ? match[2] : data;
+    const mimeType = f.mimeType || (match && match[1]) || 'application/octet-stream';
+    const bytes = Utilities.base64Decode(base64);
+    const original = sanitizeFileName_(f.name || ('file_' + (idx + 1)));
+    const finalName = sanitizeFileName_([
+      requestNo || 'REQ', category || 'เอกสารแนบ',
+      Utilities.formatDate(new Date(), CONFIG.TIMEZONE, 'yyyyMMdd_HHmmss'), original
+    ].join('_'));
+    const file = folder.createFile(Utilities.newBlob(bytes, mimeType, finalName));
+    try {
+      file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+    } catch (err) {
+      console.log('setSharing: ' + err.message);
+    }
+    names.push(finalName);
+    urls.push(file.getUrl());
+    ids.push(file.getId());
+  });
+
+  return { names: names.join('\n'), urls: urls.join('\n'), ids: ids.join('\n') };
+}
+
+function getAttachmentFolder_() {
+  const folders = DriveApp.getFoldersByName(CONFIG.ATTACHMENT_FOLDER_NAME);
+  if (folders.hasNext()) return folders.next();
+  return DriveApp.createFolder(CONFIG.ATTACHMENT_FOLDER_NAME);
+}
+
+function sanitizeFileName_(name) {
+  return String(name || '').replace(/[\\/:*?"<>|#%{}~&]/g, '_').replace(/\s+/g, ' ').trim().slice(0, 180);
+}
+
+/* =====================================================================
+ * Setting
+ * ===================================================================*/
+
+function apiGetSettings_(p) {
+  requireAuth_(p.token);
+  return { ok: true, settings: buildSettings_() };
+}
+
+function buildSettings_() {
+  const rows = getTableRows_(CONFIG.SETTING_SHEET)
+    .filter(r => isTrue_(r.IsActive))
+    .sort((a, b) => num_(a.SortOrder) - num_(b.SortOrder));
+
+  const byCategory = cat => rows
+    .filter(r => text_(r.Category) === cat)
+    .map(r => text_(r.Value) || text_(r.Label))
+    .filter(Boolean)
+    .filter((v, i, a) => a.indexOf(v) === i);
+
+  const defaults = {};
+  rows.filter(r => text_(r.Category) === 'Default').forEach(r => {
+    const key = text_(r.Label);
+    if (key) defaults[key] = text_(r.Value);
+  });
+
+  const members = cat => rows
+    .filter(r => text_(r.Category) === cat)
+    .map(r => ({ userId: text_(r.Value), fullName: text_(r.Label), settingId: text_(r.SettingID) }));
+
+  return {
+    raw: rows.map(r => ({
+      settingId: r.SettingID, category: r.Category, label: r.Label,
+      value: r.Value, sortOrder: num_(r.SortOrder), remark: r.Remark
+    })),
+    itemNames: byCategory('ItemName'),
+    units: byCategory('Unit'),
+    budgetSources: byCategory('BudgetSource'),
+    budgetTypes: BUDGET_TYPES,
+    budgetSourceTypes: rows
+      .filter(r => text_(r.Category) === 'BudgetSourceType')
+      .map(r => ({ source: text_(r.Label), budgetType: text_(r.Value) })),
+    stages: getProcurementStages_(),
+    supplyOfficers: members(ROLE_CATEGORIES.SUPPLY_OFFICER),
+    supplyHeads: members(ROLE_CATEGORIES.SUPPLY_HEAD),
+    superAdmins: members(ROLE_CATEGORIES.SUPER_ADMIN),
+    defaults: defaults
+  };
+}
+
+function apiSaveSetting_(p) {
+  const user = requireAuth_(p.token);
+  requireSuperAdmin_(user);
+  const item = p.item || {};
+  const category = text_(item.category);
+  const label = text_(item.label);
+  const value = text_(item.value) || label;
+  if (!category) throw new Error('กรุณาเลือกประเภทของตัวเลือก');
+  if (!label && !value) throw new Error('กรุณากรอกชื่อที่แสดงหรือค่า');
+
+  const sh = getSS_().getSheetByName(CONFIG.SETTING_SHEET);
+  const headers = getHeaders_(sh);
+  const rows = getTableRows_(CONFIG.SETTING_SHEET);
+  const existing = item.settingId ? rows.find(r => text_(r.SettingID) === text_(item.settingId)) : null;
+
+  const record = {
+    SettingID: existing ? existing.SettingID : makeId_('SET'),
+    Category: category,
+    Label: label || value,
+    Value: value,
+    SortOrder: num_(item.sortOrder) || (existing ? num_(existing.SortOrder) : rows.length + 1),
+    IsActive: 1,
+    Remark: text_(item.remark),
+    UpdatedAt: new Date()
+  };
+
+  if (existing) writeObjectRow_(sh, headers, record, existing._rowNumber);
+  else appendObjectRow_(sh, headers, record);
+
+  clearTableCache_(CONFIG.SETTING_SHEET);
+  delete cachedTableData_.__roleConfig;
+  addLog_(user, 'SAVE_SETTING', '', category + ': ' + record.Label);
+  return { ok: true, message: 'บันทึกตัวเลือกเรียบร้อยแล้ว', settings: buildSettings_() };
+}
+
+function apiDeleteSetting_(p) {
+  const user = requireAuth_(p.token);
+  requireSuperAdmin_(user);
+  deleteRowsByValue_(CONFIG.SETTING_SHEET, 'SettingID', p.settingId);
+  delete cachedTableData_.__roleConfig;
+  addLog_(user, 'DELETE_SETTING', '', text_(p.settingId));
+  return { ok: true, message: 'ลบตัวเลือกเรียบร้อยแล้ว', settings: buildSettings_() };
+}
+
+/**
+ * กำหนดรายชื่อเจ้าหน้าที่พัสดุ / หัวหน้าเจ้าหน้าที่ / superadmin
+ * โดยเลือก UserID จากแผ่นงาน UserAccounts
+ */
+function apiSetRoleMembers_(p) {
+  const user = requireAuth_(p.token);
+  requireSuperAdmin_(user);
+  const category = text_(p.category);
+  if ([ROLE_CATEGORIES.SUPPLY_OFFICER, ROLE_CATEGORIES.SUPPLY_HEAD, ROLE_CATEGORIES.SUPER_ADMIN].indexOf(category) === -1) {
+    throw new Error('ประเภทสิทธิไม่ถูกต้อง');
+  }
+  const userIds = (p.userIds || []).map(text_).filter(Boolean);
+  if (category === ROLE_CATEGORIES.SUPER_ADMIN && !userIds.length) {
+    throw new Error('ต้องมีผู้ดูแลระบบอย่างน้อย 1 คน');
+  }
+
+  const sh = getSS_().getSheetByName(CONFIG.SETTING_SHEET);
+  const headers = getHeaders_(sh);
+  const rows = getTableRows_(CONFIG.SETTING_SHEET);
+  for (let i = rows.length - 1; i >= 0; i--) {
+    if (text_(rows[i].Category) === category) sh.deleteRow(rows[i]._rowNumber);
+  }
+
+  const records = userIds.map((id, i) => {
+    const u = getUserById_(id);
+    return {
+      SettingID: makeId_('SET'),
+      Category: category,
+      Label: u ? text_(u.FullName) : id,
+      Value: id,
+      SortOrder: i + 1,
+      IsActive: 1,
+      Remark: u ? text_(u.Department) : '',
+      UpdatedAt: new Date()
+    };
+  });
+  appendObjectRows_(sh, headers, records);
+
+  clearTableCache_(CONFIG.SETTING_SHEET);
+  delete cachedTableData_.__roleConfig;
+  addLog_(user, 'SET_ROLE_MEMBERS', '', category + ' = ' + userIds.length + ' คน');
+  return { ok: true, message: 'บันทึกรายชื่อผู้มีสิทธิเรียบร้อยแล้ว', settings: buildSettings_() };
+}
+
+function budgetTypeFromSource_(source) {
+  const src = text_(source);
+  if (!src) return '';
+  const mapping = getTableRows_(CONFIG.SETTING_SHEET)
+    .filter(r => isTrue_(r.IsActive) && text_(r.Category) === 'BudgetSourceType')
+    .find(r => text_(r.Label) === src);
+  if (mapping) return text_(mapping.Value);
+  return /งบประมาณรายจ่าย|เงินงบประมาณ/.test(src) ? BUDGET_TYPES[0] : BUDGET_TYPES[1];
+}
+
+function seedDefaultSettings_() {
+  const sh = getSS_().getSheetByName(CONFIG.SETTING_SHEET);
+  if (!sh) return;
+  const headers = getHeaders_(sh);
+  const existing = getTableRows_(CONFIG.SETTING_SHEET, true);
+  const has = (cat, value) => existing.some(r => text_(r.Category) === cat && text_(r.Value) === value);
+  const hasCategory = cat => existing.some(r => text_(r.Category) === cat);
+
+  const toAdd = [];
+  const push = (cat, label, value, remark) => {
+    if (!has(cat, value)) toAdd.push([cat, label, value, remark || 'ค่าเริ่มต้นระบบ']);
+  };
+
+  if (!hasCategory('Default')) {
+    push('Default', 'ชื่อผู้รับเรื่อง', 'นายแพทย์สาธารณสุขจังหวัดนครนายก');
+    push('Default', 'ตำแหน่งเจ้าหน้าที่พัสดุ', 'เจ้าหน้าที่');
+    push('Default', 'ตำแหน่งหัวหน้าเจ้าหน้าที่', 'หัวหน้าเจ้าหน้าที่');
+  }
+  ['NotifyEmail', 'ExportSpreadsheetId', 'ExportSheetPrefix', 'ExportApiKey'].forEach(key => {
+    if (!existing.some(r => text_(r.Category) === 'Default' && text_(r.Label) === key)) {
+      toAdd.push(['Default', key, key === 'NotifyEmail' ? '0' : '', 'ตั้งค่าระบบ']);
+    }
+  });
+
+  if (!hasCategory('ProcurementStage')) {
+    PROCUREMENT_STAGES.forEach(s => push('ProcurementStage', s, s));
+  }
+  if (!hasCategory('BudgetSourceType')) {
+    push('BudgetSourceType', 'งบประมาณรายจ่ายประจำปี', BUDGET_TYPES[0]);
+    push('BudgetSourceType', 'เงินบำรุง', BUDGET_TYPES[1]);
+    push('BudgetSourceType', 'เงินโครงการ', BUDGET_TYPES[1]);
+  }
+  if (!hasCategory('Unit')) {
+    ['รีม', 'แท่ง', 'กล่อง', 'ชุด', 'รายการ'].forEach(u => push('Unit', u, u));
+  }
+  if (!hasCategory('BudgetSource')) {
+    ['เงินบำรุง', 'งบประมาณรายจ่ายประจำปี', 'เงินโครงการ'].forEach(b => push('BudgetSource', b, b));
+  }
+
+  if (!toAdd.length) return;
+  const base = existing.length;
+  appendObjectRows_(sh, headers, toAdd.map((d, i) => ({
+    SettingID: makeId_('SET'),
+    Category: d[0], Label: d[1], Value: d[2],
+    SortOrder: base + i + 1, IsActive: 1, Remark: d[3], UpdatedAt: new Date()
+  })));
+  clearTableCache_(CONFIG.SETTING_SHEET);
+}
+
+/* =====================================================================
+ * Dashboard (ข้อ 7)
+ * ===================================================================*/
+
+function apiDashboard_(p) {
+  const user = requireAuth_(p.token);
+  const rows = listRequestRows_(user, p.filters || {});
+  return {
+    ok: true,
+    dashboard: buildDashboard_(rows, p.filters || {}),
+    requests: rows.map(summarizeRequest_)
+  };
+}
+
+function apiPublicDashboard_(p) {
+  setupSupplySystem();
+  const rows = getTableRows_(CONFIG.REQUEST_SHEET)
+    .filter(r => bool01_(r.IsLatest) === 1 || text_(r.IsLatest) === '');
+  return {
+    ok: true,
+    dashboard: buildDashboard_(rows, {}),
+    requests: rows.slice(0, 300).map(summarizeRequest_)
+  };
+}
+
+function buildDashboard_(rows, filters) {
+  const stages = getProcurementStages_();
+  const progressRows = getTableRows_(CONFIG.PROGRESS_SHEET);
+  const progressByRequest = {};
+  progressRows.forEach(r => {
+    const id = text_(r.RequestID);
+    if (!progressByRequest[id]) progressByRequest[id] = [];
+    progressByRequest[id].push(r);
+  });
+
+  const durations = { submitToCheck: [], submitToApprove: [], approveToComplete: [], submitToComplete: [] };
+  const stageDurations = {};
+  stages.forEach(s => stageDurations[s] = []);
+
+  let totalAmount = 0, approvedAmount = 0;
+  const counters = { draft: 0, pending: 0, checked: 0, approved: 0, inProgress: 0, completed: 0, returned: 0, cancelled: 0 };
+
+  rows.forEach(r => {
+    const status = normalizeStatus_(r.Status);
+    totalAmount += num_(r.TotalAmount);
+    if (status === STATUS.DRAFT) counters.draft++;
+    else if (status === STATUS.SUBMITTED) counters.pending++;
+    else if (status === STATUS.CHECKED) counters.checked++;
+    else if (status === STATUS.APPROVED) counters.approved++;
+    else if (status === STATUS.IN_PROGRESS) counters.inProgress++;
+    else if (status === STATUS.COMPLETED) counters.completed++;
+    else if (status === STATUS.RETURNED) counters.returned++;
+    else if (status === STATUS.CANCELLED) counters.cancelled++;
+
+    const submitted = toDate_(r.SubmittedAt);
+    const checked = toDate_(r.CheckedAt);
+    const approved = toDate_(r.ApprovedAt);
+    const completed = toDate_(r.CompletedAt);
+
+    if (approved) approvedAmount += num_(r.TotalAmount);
+    if (submitted && checked) durations.submitToCheck.push(dayDiff_(submitted, checked));
+    if (submitted && approved) durations.submitToApprove.push(dayDiff_(submitted, approved));
+    if (approved && completed) durations.approveToComplete.push(dayDiff_(approved, completed));
+    if (submitted && completed) durations.submitToComplete.push(dayDiff_(submitted, completed));
+
+    // ระยะเวลาของแต่ละขั้นตอนพัสดุ = เวลาจากขั้นตอนก่อนหน้าถึงขั้นตอนนั้น
+    const logs = (progressByRequest[text_(r.RequestID)] || [])
+      .filter(x => stages.indexOf(text_(x.ProgressStatus)) > -1)
+      .map(x => ({ stage: text_(x.ProgressStatus), at: toDate_(x.ProgressAt) }))
+      .filter(x => x.at)
+      .sort((a, b) => a.at.getTime() - b.at.getTime());
+    let prev = approved || submitted;
+    logs.forEach(log => {
+      if (prev) stageDurations[log.stage].push(dayDiff_(prev, log.at));
+      prev = log.at;
+    });
+  });
+
+  const byYear = aggregate_(rows, r => text_(r.FiscalYear) || String(fiscalYear_(toDate_(r.CreatedAt))));
+  byYear.sort((a, b) => String(a.label).localeCompare(String(b.label)));
+
+  return {
+    total: rows.length,
+    totalAmount: totalAmount,
+    approvedAmount: approvedAmount,
+    counters: counters,
+    durations: {
+      submitToCheck: summarizeDurations_(durations.submitToCheck),
+      submitToApprove: summarizeDurations_(durations.submitToApprove),
+      approveToComplete: summarizeDurations_(durations.approveToComplete),
+      submitToComplete: summarizeDurations_(durations.submitToComplete)
+    },
+    stageDurations: stages.map(s => Object.assign({ stage: s }, summarizeDurations_(stageDurations[s]))),
+    byYear: byYear,
+    byStatus: aggregate_(rows, r => normalizeStatus_(r.Status)),
+    byDepartment: aggregate_(rows, r => text_(r.Department) || 'ไม่ระบุ'),
+    byBudgetType: aggregate_(rows, r => text_(r.BudgetType) || 'ไม่ระบุ'),
+    byBudgetSource: aggregate_(rows, r => text_(r.PlanBudgetSource) || 'ไม่ระบุ'),
+    byPurchaseType: aggregate_(rows, r => text_(r.PurchaseType) || 'ไม่ระบุ'),
+    byStage: aggregate_(rows, r => text_(r.CurrentStage) || 'ยังไม่เริ่มดำเนินการ'),
+    byMonth: aggregateMonth_(rows),
+    filters: filters,
+    generatedAt: nowText_()
+  };
+}
+
+function dayDiff_(a, b) {
+  return Math.max(0, Math.round((b.getTime() - a.getTime()) / 86400000 * 100) / 100);
+}
+
+function summarizeDurations_(values) {
+  if (!values.length) return { count: 0, avg: 0, min: 0, max: 0 };
+  const sum = values.reduce((s, v) => s + v, 0);
+  return {
+    count: values.length,
+    avg: Math.round(sum / values.length * 100) / 100,
+    min: Math.round(Math.min.apply(null, values) * 100) / 100,
+    max: Math.round(Math.max.apply(null, values) * 100) / 100
+  };
+}
+
+function aggregate_(rows, keyFn) {
+  const map = {};
+  rows.forEach(r => {
+    const label = keyFn(r) || 'ไม่ระบุ';
+    if (!map[label]) map[label] = { label: label, count: 0, amount: 0 };
+    map[label].count++;
+    map[label].amount += num_(r.TotalAmount);
+  });
+  return Object.keys(map).map(k => map[k]).sort((a, b) => b.count - a.count || b.amount - a.amount);
+}
+
+function aggregateMonth_(rows) {
+  const map = {};
+  rows.forEach(r => {
+    const d = toDate_(r.RequestDate) || toDate_(r.CreatedAt);
+    if (!d) return;
+    const key = Utilities.formatDate(d, CONFIG.TIMEZONE, 'yyyy-MM');
+    if (!map[key]) map[key] = { label: key, count: 0, amount: 0 };
+    map[key].count++;
+    map[key].amount += num_(r.TotalAmount);
+  });
+  return Object.keys(map).sort().map(k => map[k]);
+}
+
+/* =====================================================================
+ * ส่งออกข้อมูล (ข้อ 8) และ API ไปยัง Sheet ปลายทาง (ข้อ 9)
+ * ===================================================================*/
+
+function apiExportRows_(p) {
+  const user = requireAuth_(p.token);
+  const rows = listRequestRows_(user, p.filters || {});
+  const items = getTableRows_(CONFIG.ITEM_SHEET);
+  const supply = isSupply_(user);
+
+  const requestRows = rows.map(r => ({
+    'เลขที่คำขอ': text_(r.RequestNo),
+    'เวอร์ชัน': num_(r.Version) || 1,
+    'ปีงบประมาณ': text_(r.FiscalYear),
+    'วันที่คำขอ': formatDateOnly_(r.RequestDate),
+    'กลุ่มงาน': text_(r.Department),
+    'ผู้ยื่นคำขอ': text_(r.CreatedByName),
+    'เรื่อง': text_(r.Subject),
+    'ประเภท': text_(r.PurchaseType),
+    'ประเภทงบประมาณ': text_(r.BudgetType),
+    'แหล่งเงิน': text_(r.PlanBudgetSource),
+    'จำนวนรายการ': num_(r.ItemCount),
+    'วงเงินรวม': num_(r.TotalAmount),
+    'สถานะ': normalizeStatus_(r.Status),
+    'ขั้นตอนพัสดุล่าสุด': text_(r.CurrentStage),
+    'วันที่ส่งพัสดุ': formatDateOnly_(r.SubmittedAt),
+    'วันที่ผ่านตรวจสอบ': formatDateOnly_(r.CheckedAt),
+    'วันที่อนุมัติ': formatDateOnly_(r.ApprovedAt),
+    'วันที่แล้วเสร็จ': formatDateOnly_(r.CompletedAt),
+    'จำนวนครั้งที่ถูกตีกลับ': num_(r.ReturnCount),
+    'ล็อกข้อมูล': bool01_(r.IsLocked) === 1 ? 'ล็อก' : ''
+  }));
+
+  const ids = {};
+  rows.forEach(r => ids[text_(r.RequestID)] = text_(r.RequestNo));
+  const itemRows = items.filter(it => ids[text_(it.RequestID)]).map(it => ({
+    'เลขที่คำขอ': ids[text_(it.RequestID)],
+    'ลำดับ': num_(it.LineNo),
+    'รายการ': text_(it.ItemName),
+    'จำนวน': num_(it.Quantity),
+    'หน่วยนับ': text_(it.Unit),
+    'ราคา/หน่วย': num_(it.UnitPrice),
+    'ราคารวม': num_(it.TotalPrice),
+    'ราคาซื้อหลังสุด': num_(it.LastPrice)
+  }));
+
+  const progressRows = getTableRows_(CONFIG.PROGRESS_SHEET)
+    .filter(r => ids[text_(r.RequestID)])
+    .map(r => {
+      const row = {
+        'เลขที่คำขอ': ids[text_(r.RequestID)],
+        'วันที่': formatDateTime_(toDate_(r.ProgressAt)) || text_(r.ProgressAt),
+        'ขั้นตอน': text_(r.ProgressStatus),
+        'ผู้บันทึก': text_(r.ProgressByName),
+        'หมายเหตุ': text_(r.Note)
+      };
+      if (supply) row['note พัสดุ'] = text_(r.SupplyNote);
+      return row;
+    });
+
+  addLog_(user, 'EXPORT', '', 'ส่งออกข้อมูล ' + requestRows.length + ' คำขอ');
+  return { ok: true, requests: requestRows, items: itemRows, progress: progressRows, generatedAt: nowText_() };
+}
+
+function formatDateOnly_(value) {
+  const d = toDate_(value);
+  return d ? Utilities.formatDate(d, CONFIG.TIMEZONE, 'yyyy-MM-dd') : '';
+}
+
+function getSettingValue_(label, fallback) {
+  const row = getTableRows_(CONFIG.SETTING_SHEET)
+    .find(r => text_(r.Category) === 'Default' && text_(r.Label) === label);
+  const value = row ? text_(row.Value) : '';
+  return value || (fallback || '');
+}
+
+/**
+ * คัดลอกข้อมูลไปยัง Google Sheet ปลายทางที่กำหนดใน setting → Default → ExportSpreadsheetId
+ * เรียกได้ทั้งจากปุ่มในระบบ และจาก time-driven trigger (scheduledExport)
+ */
+function apiSyncExport_(p) {
+  const user = requireAuth_(p.token);
+  requireSuperAdmin_(user);
+  const result = runExport_();
+  addLog_(user, 'SYNC_EXPORT', '', result.message);
+  return result;
+}
+
+function runExportNow_() {
+  const res = runExport_();
+  SpreadsheetApp.getUi().alert(res.message);
+}
+
+function scheduledExport() {
+  try {
+    const res = runExport_();
+    console.log(res.message);
+  } catch (err) {
+    console.error('scheduledExport: ' + err.message);
+  }
+}
+
+function runExport_() {
+  clearTableCache_();
+  const targetId = getSettingValue_('ExportSpreadsheetId');
+  if (!targetId) throw new Error('ยังไม่ได้ตั้งค่า ExportSpreadsheetId ในหน้า Setting');
+  const prefix = getSettingValue_('ExportSheetPrefix', 'Supply_');
+  const target = SpreadsheetApp.openById(targetId);
+
+  // MyNote เป็นบันทึกส่วนตัวของผู้บันทึก จึงไม่ส่งออกไปยังไฟล์ปลายทาง
+  const tables = [
+    [CONFIG.REQUEST_SHEET, []],
+    [CONFIG.ITEM_SHEET, []],
+    [CONFIG.PROGRESS_SHEET, ['MyNote']]
+  ];
+
+  let totalRows = 0;
+  tables.forEach(pair => {
+    const source = getSS_().getSheetByName(pair[0]);
+    if (!source || source.getLastRow() < 1) return;
+    let values = source.getDataRange().getDisplayValues();
+    const skip = pair[1].map(name => values[0].indexOf(name)).filter(i => i > -1);
+    if (skip.length) {
+      values = values.map(row => row.filter((cell, i) => skip.indexOf(i) === -1));
+    }
+    const name = prefix + pair[0];
+    let sheet = target.getSheetByName(name);
+    if (!sheet) sheet = target.insertSheet(name);
+    sheet.clear();
+    sheet.getRange(1, 1, values.length, values[0].length).setValues(values);
+    sheet.setFrozenRows(1);
+    totalRows += values.length - 1;
+  });
+
+  const stamp = target.getSheetByName(prefix + 'SyncInfo') || target.insertSheet(prefix + 'SyncInfo');
+  stamp.clear();
+  stamp.getRange(1, 1, 2, 2).setValues([
+    ['ซิงก์ล่าสุด', nowText_()],
+    ['จำนวนแถวข้อมูล', totalRows]
+  ]);
+
+  return { ok: true, message: 'ส่งข้อมูลไป Sheet ปลายทางแล้ว ' + totalRows + ' แถว เมื่อ ' + nowText_(), rows: totalRows };
+}
+
+/** ติดตั้ง trigger ตามเวลา — เรียกครั้งเดียวจาก Apps Script editor */
+function installExportTriggerHourly() {
+  removeExportTriggers_();
+  ScriptApp.newTrigger('scheduledExport').timeBased().everyHours(1).create();
+}
+
+function installExportTriggerDaily() {
+  removeExportTriggers_();
+  ScriptApp.newTrigger('scheduledExport').timeBased().everyDays(1).atHour(1).create();
+}
+
+function removeExportTriggers_() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'scheduledExport')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+}
+
+/** API แบบ read-only ให้ระบบภายนอกดึงข้อมูลด้วย API key */
+function apiExternalData_(p) {
+  const key = getSettingValue_('ExportApiKey');
+  if (!key) throw new Error('ยังไม่ได้ตั้งค่า ExportApiKey');
+  if (text_(p.key) !== key) throw new Error('API key ไม่ถูกต้อง');
+
+  const rows = getTableRows_(CONFIG.REQUEST_SHEET)
+    .filter(r => bool01_(r.IsLatest) === 1 || text_(r.IsLatest) === '')
+    .filter(r => matchFilters_(r, p.filters || {}))
+    .map(summarizeRequest_);
+  return { ok: true, count: rows.length, requests: rows, generatedAt: nowText_() };
+}
+
+/* =====================================================================
+ * แจ้งเตือนทางอีเมล (ไม่บังคับ — เปิด/ปิดที่ setting Default → NotifyEmail)
+ * ===================================================================*/
+
+function notifyEnabled_() {
+  return isTrue_(getSettingValue_('NotifyEmail', '0'));
+}
+
+function notifySupplyOfficers_(request, sender) {
+  if (!notifyEnabled_()) return;
+  try {
+    const cfg = getRoleConfig_();
+    const emails = cfg.supplyIds
+      .map(id => getUserById_(id))
+      .filter(u => u && text_(u.Email))
+      .map(u => text_(u.Email));
+    if (!emails.length) return;
+    MailApp.sendEmail({
+      to: emails.join(','),
+      subject: '[พัสดุ] คำขอใหม่รอตรวจสอบ ' + text_(request.RequestNo),
+      body: [
+        'มีคำขอใช้พัสดุรอการตรวจสอบ',
+        'เลขที่คำขอ: ' + text_(request.RequestNo),
+        'เรื่อง: ' + text_(request.Subject),
+        'กลุ่มงาน: ' + text_(request.Department),
+        'ผู้ยื่นคำขอ: ' + text_(sender.FullName),
+        'วงเงิน: ' + num_(request.TotalAmount).toLocaleString('th-TH') + ' บาท'
+      ].join('\n')
+    });
+  } catch (err) {
+    console.log('notifySupplyOfficers_: ' + err.message);
+  }
+}
+
+function notifyRequester_(request, subject, body) {
+  if (!notifyEnabled_()) return;
+  try {
+    const owner = getUserById_(request.CreatedByUserID);
+    const email = owner ? text_(owner.Email) : text_(request.CreatedByEmail);
+    if (!email) return;
+    MailApp.sendEmail({ to: email, subject: '[พัสดุ] ' + subject + ' ' + text_(request.RequestNo), body: body });
+  } catch (err) {
+    console.log('notifyRequester_: ' + err.message);
+  }
+}
+
+/* =====================================================================
+ * Audit log (ข้อ 10)
+ * ===================================================================*/
 
 function addLog_(user, action, requestId, detail) {
   try {
@@ -1175,72 +2213,42 @@ function addLog_(user, action, requestId, detail) {
     appendObjectRow_(sh, getHeaders_(sh), {
       LogID: makeId_('LOG'),
       Timestamp: new Date(),
-      UserID: user.UserID || '',
-      UserName: user.FullName || user.Username || '',
+      UserID: text_(user.UserID),
+      UserName: text_(user.FullName) || text_(user.Username),
       Action: action,
-      RequestID: requestId || '',
-      Detail: detail || ''
+      RequestID: text_(requestId),
+      Detail: String(detail || '').slice(0, 500),
+      IP: ''
     });
   } catch (err) {
-    console.log('Log error: ' + err.message);
+    console.log('addLog_: ' + err.message);
   }
 }
 
-function getMainPdfBase64(session, requestId) {
-  const user = verifySession_(session);
-  const sh = getSS_().getSheetByName(CONFIG.REQUEST_SHEET);
-  const rows = getTableRows_(CONFIG.REQUEST_SHEET);
-  const req = rows.find(r => r.RequestID === requestId);
-  if (!req) throw new Error('ไม่พบคำขอนี้');
-  if (!req.MainPdfFileId) throw new Error('ยังไม่มีไฟล์ PDF');
-  try {
-    const file = DriveApp.getFileById(req.MainPdfFileId);
-    const blob = file.getBlob();
-    const base64 = Utilities.base64Encode(blob.getBytes());
-    return { ok: true, base64: base64 };
-  } catch (err) {
-    throw new Error('ไม่สามารถอ่านไฟล์ PDF ได้: ' + err.message);
-  }
-}
-
-function saveEditedPdf(session, requestId, base64Data) {
-  const user = verifySession_(session);
-  const sh = getSS_().getSheetByName(CONFIG.REQUEST_SHEET);
-  const headers = getHeaders_(sh);
-  const rows = getTableRows_(CONFIG.REQUEST_SHEET);
-  const rowIndex = rows.findIndex(r => r.RequestID === requestId);
-  if (rowIndex === -1) throw new Error('ไม่พบคำขอนี้');
-  
-  const req = rows[rowIndex];
-  const blob = Utilities.newBlob(Utilities.base64Decode(base64Data), MimeType.PDF, 'request_' + requestId + '.pdf');
-  
-  let file, url, fileId;
-  if (req.MainPdfFileId) {
-    try {
-      file = DriveApp.getFileById(req.MainPdfFileId);
-      // Create a new file and trash the old one, or just update the content if possible.
-      // Apps Script doesn't have a direct file.setContent(blob) for PDF, it only updates text.
-      // So we trash the old one and create a new one.
-      file.setTrashed(true);
-    } catch(e) {}
-  }
-  
-  const folder = getFolder_(CONFIG.ATTACHMENT_FOLDER_NAME);
-  file = folder.createFile(blob);
-  file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
-  url = file.getUrl();
-  fileId = file.getId();
-  
-  const idCol = headers.indexOf('MainPdfFileId') + 1;
-  const urlCol = headers.indexOf('MainPdfUrl') + 1;
-  
-  if (idCol > 0 && urlCol > 0) {
-    sh.getRange(rowIndex + 2, idCol).setValue(fileId);
-    sh.getRange(rowIndex + 2, urlCol).setValue(url);
-  }
-  
-  clearTableCache_(CONFIG.REQUEST_SHEET);
-  addLog_(user, 'Save_PDF', requestId, 'อัปเดตไฟล์ PDF (Save PDF)');
-  
-  return { ok: true, url: url, fileId: fileId };
+function apiListLogs_(p) {
+  const user = requireAuth_(p.token);
+  requireSuperAdmin_(user);
+  const limit = Math.min(num_(p.limit) || 300, 2000);
+  const rows = getTableRows_(CONFIG.LOG_SHEET)
+    .filter(r => {
+      if (p.requestId && text_(r.RequestID) !== text_(p.requestId)) return false;
+      if (p.userId && text_(r.UserID) !== text_(p.userId)) return false;
+      if (p.action && text_(r.Action) !== text_(p.action)) return false;
+      return true;
+    })
+    .sort((a, b) => {
+      const da = toDate_(a.Timestamp), db = toDate_(b.Timestamp);
+      return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
+    })
+    .slice(0, limit)
+    .map(r => ({
+      logId: r.LogID,
+      timestamp: r.Timestamp,
+      userId: r.UserID,
+      userName: r.UserName,
+      action: r.Action,
+      requestId: r.RequestID,
+      detail: r.Detail
+    }));
+  return { ok: true, logs: rows };
 }
