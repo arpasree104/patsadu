@@ -159,11 +159,15 @@
       body: JSON.stringify(body),
       redirect: 'follow'
     })
-      .then(function (res) { return res.text(); })
-      .then(function (text) {
+      .then(function (res) {
+        return res.text().then(function (text) { return { status: res.status, text: text }; });
+      })
+      .then(function (raw) {
         var json;
-        try { json = JSON.parse(text); }
-        catch (e) { throw new Error('เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง — ตรวจสอบว่า Deploy Web App แบบ "Anyone" แล้ว'); }
+        try { json = JSON.parse(raw.text); }
+        catch (e) {
+          throw new Error('เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง (HTTP ' + raw.status + ') — ตรวจสอบว่า Deploy Web App โดยตั้ง "ผู้ที่มีสิทธิ์เข้าถึง" เป็น "ทุกคน" แล้ว');
+        }
         if (!json.ok) throw new Error(json.error || 'เกิดข้อผิดพลาดที่เซิร์ฟเวอร์');
         if (options.message !== false) idle(options.done || '');
         return json;
