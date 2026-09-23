@@ -272,8 +272,8 @@ tbody tr:hover td { background: #fbfefe; }
 .draft-mark { margin-top: 6mm; text-align: center; font-size: 13pt; color: #b91c1c; border: 1px dashed #b91c1c; padding: 2mm; }
 .print-small { font-size: 15.5pt; line-height: 1.05; }
 .exec-report h1 { font-size: 26pt; text-align: center; margin: 0 0 8px; }
-.exec-report .kpi-print { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }
-.exec-report .kpi-print div { border: 1px solid #000; padding: 5px; text-align: center; }
+.exec-report .kpi-print { margin: 8px 0; }
+.exec-report .kpi-print td { text-align: center; width: 25%; }
 .exec-report .kpi-print b { display: block; font-size: 20pt; }
 
 @media print {

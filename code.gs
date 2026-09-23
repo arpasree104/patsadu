@@ -740,6 +740,7 @@ function apiLogin_(p) {
 function apiLogout_(p) {
   const token = text_(p.token);
   if (!token) return { ok: true };
+  CacheService.getScriptCache().remove(sessionCacheKey_(token));
   const sh = getSS_().getSheetByName(CONFIG.SESSION_SHEET);
   if (!sh || sh.getLastRow() < 2) return { ok: true };
   const values = sh.getRange(2, 1, sh.getLastRow() - 1, 1).getValues();
@@ -764,8 +765,24 @@ function createSession_(user, client) {
     Client: text_(client).slice(0, 200)
   });
   clearTableCache_(CONFIG.SESSION_SHEET);
+  cacheSession_(token, text_(user.UserID), expires);
   purgeExpiredSessions_(sh);
   return token;
+}
+
+function sessionCacheKey_(token) {
+  return 'sess_' + token;
+}
+
+/** เก็บโทเคนไว้ในแคชไม่เกินอายุจริงของเซสชัน */
+function cacheSession_(token, userId, expiresAt) {
+  const seconds = Math.floor((expiresAt.getTime() - new Date().getTime()) / 1000);
+  if (seconds <= 0) return;
+  CacheService.getScriptCache().put(
+    sessionCacheKey_(token),
+    userId + '|' + expiresAt.getTime(),
+    Math.min(seconds, 21600)
+  );
 }
 
 function purgeExpiredSessions_(sh) {
@@ -784,12 +801,26 @@ function requireAuth_(token) {
   token = text_(token);
   if (!token) throw new Error('กรุณาเข้าสู่ระบบก่อนใช้งาน');
 
-  const session = getTableRows_(CONFIG.SESSION_SHEET).find(r => text_(r.Token) === token);
-  if (!session) throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
-  const exp = toDate_(session.ExpiresAt);
-  if (!exp || exp < new Date()) throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+  // โทเคนที่ยังอยู่ในแคชไม่ต้องอ่านแผ่นงาน SupplySessions ซ้ำ
+  // แต่ยังต้องตรวจวันหมดอายุที่เก็บคู่กันไว้เสมอ
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(sessionCacheKey_(token));
+  let userId = '';
+  if (cached) {
+    const parts = String(cached).split('|');
+    if (Number(parts[1]) > new Date().getTime()) userId = parts[0];
+    else cache.remove(sessionCacheKey_(token));
+  }
+  if (!userId) {
+    const session = getTableRows_(CONFIG.SESSION_SHEET).find(r => text_(r.Token) === token);
+    if (!session) throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+    const exp = toDate_(session.ExpiresAt);
+    if (!exp || exp < new Date()) throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
+    userId = text_(session.UserID);
+    cacheSession_(token, userId, exp);
+  }
 
-  const user = getUserById_(session.UserID);
+  const user = getUserById_(userId);
   if (!user) throw new Error('ไม่พบบัญชีผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
   if (!isTrue_(user.IsActive)) throw new Error('บัญชีนี้ถูกปิดใช้งาน');
   return user;
