@@ -10,7 +10,7 @@
  * หมายเหตุ: ถ้ายังไม่ได้ตั้งค่า ระบบจะขึ้นหน้าให้กรอก URL เองและจำไว้ในเครื่อง
  */
 window.APP_CONFIG = {
-  API_URL: 'https://script.google.com/macros/s/AKfycbxWH2PQLaNKvANIQxZopoERaWXKzF_qIzIbPw4VYkNfbg98NIs_KdckNV0JEa3Q23Nk/exec',
+  API_URL: 'https://script.google.com/macros/s/AKfycbzhsgXqwNoxLfmFw_J4oZzsI5tR_QRELzfZs90Hl9OKKfxuCsN5SiY4slmyivIPjulW/exec',
   APP_TITLE: 'ระบบเสนอความต้องการพัสดุ',
   ORG_NAME: 'สำนักงานสาธารณสุขจังหวัดนครนายก',
   GARUDA_URL: 'https://img1.pic.in.th/images/310f1c8dc44d07e2888f3e0c3f416701.png',
