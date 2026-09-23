@@ -227,7 +227,7 @@ tbody tr:hover td { background: #fbfefe; }
   width: 210mm; min-height: 297mm; background: #fff; margin: 0 auto; padding: 8.5mm 10.5mm 7mm;
   box-shadow: 0 12px 50px rgba(0, 0, 0, .25);
   font-family: "TH Sarabun New", "Sarabun", Arial, sans-serif; color: #000;
-  font-size: 15.5pt; line-height: 1.10; letter-spacing: .01pt;
+  font-size: 15.5pt; line-height: 1.10; letter-spacing: .01pt; overflow: hidden;
 }
 .print-page * { box-sizing: border-box; }
 .garuda-wrap { height: 12mm; margin-bottom: 1mm; }
@@ -238,6 +238,20 @@ tbody tr:hover td { background: #fbfefe; }
   height: 18px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; vertical-align: baseline;
 }
 .memo-row { margin: 2px 0; }
+.frow { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 5px; margin: 2px 0; }
+.frow > span { white-space: nowrap; }
+.fill {
+  flex: 1 1 auto; min-width: 0; border-bottom: 1px dotted #111; padding: 0 3px;
+  height: 18px; line-height: 18px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.fill.w-xs { flex: 0 0 15mm; }
+.fill.w-sm { flex: 0 0 24mm; }
+.fill.w-md { flex: 0 0 38mm; }
+.frow > .fill-multi {
+  flex: 1 1 auto; min-width: 0; white-space: normal; padding: 0 3px;
+  line-height: 18px; min-height: 18px;
+  background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 17px, #111 17px, #111 18px);
+}
 .indent { text-indent: 40px; }
 .top-rule { border: 0; border-top: 1.2px solid #000; margin: 4px 0 6px; }
 .print-table { width: 100%; border-collapse: collapse; margin: 4px 0 5px; font-size: 15.5pt; table-layout: fixed; }
@@ -247,13 +261,15 @@ tbody tr:hover td { background: #fbfefe; }
 .print-table .right { text-align: right; }
 .print-table .center { text-align: center; }
 .sign-table { width: 100%; border-collapse: collapse; margin-top: 2px; }
-.sign-table td { border: 0 !important; background: #fff !important; vertical-align: top; padding: 0 !important; }
+.sign-table td { border: 0 !important; background: #fff !important; vertical-align: top; padding: 0 !important; font-size: 13.5pt; line-height: 1.14; overflow: hidden; }
+.sign-table .frow > span { white-space: normal; }
 .sign-table .sig-left { width: 48%; padding-right: 5mm !important; }
 .sign-table .sig-right { width: 52%; padding-left: 5mm !important; }
 .sign-center { text-align: center; margin-top: 6px; line-height: 1.1; }
 .sig-block { min-height: 12mm; margin-bottom: 1mm; display: flex; align-items: flex-end; justify-content: center; }
 .signature-img { max-width: 120px; max-height: 36px; display: block; margin: 0 auto -2px; }
 .approval { text-align: center; margin-top: 2px; font-weight: 900; }
+.draft-mark { margin-top: 6mm; text-align: center; font-size: 13pt; color: #b91c1c; border: 1px dashed #b91c1c; padding: 2mm; }
 .print-small { font-size: 15.5pt; line-height: 1.05; }
 .exec-report h1 { font-size: 26pt; text-align: center; margin: 0 0 8px; }
 .exec-report .kpi-print { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin: 8px 0; }

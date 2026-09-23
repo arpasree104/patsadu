@@ -16,6 +16,7 @@
     requests: [],
     dashboard: null,
     detail: null,
+    detailCache: {},
     currentRequestId: '',
     removeFiles: {},
     reviewAction: '',
@@ -401,8 +402,21 @@
   function toggleSidebar() { $('sidebar').classList.toggle('hidden'); }
 
   function reload() {
+    STATE.detailCache = {};
     if (STATE.publicMode) return viewPublicDashboard();
     return bootstrap();
+  }
+
+  /** ดึงเฉพาะรายการคำขอมาอัปเดต โดยไม่ต้องโหลดข้อมูลทั้งระบบใหม่ */
+  function refreshListInBackground() {
+    return api('listRequests', { filters: currentFilters() }, { message: false })
+      .then(function (res) {
+        STATE.requests = res.requests || [];
+        renderList();
+        fillTrackSelect();
+        $('lastSync').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
+      })
+      .catch(function () { /* ไม่กระทบงานหลัก */ });
   }
 
   /* ==================== ตัวกรอง + แดชบอร์ด ==================== */
@@ -612,10 +626,21 @@
 
   function openRequest(requestId) {
     showPage('form');
-    $('statusPanel').innerHTML = '';
-    skeleton($('statusPanel'), 2);
-    return api('getRequest', { requestId: requestId }, { message: 'กำลังเปิดคำขอ...', done: '' })
+    // มีข้อมูลในเครื่องอยู่แล้วให้แสดงทันที แล้วค่อยดึงข้อมูลล่าสุดมาทับ
+    var cached = STATE.detailCache[requestId];
+    if (cached) {
+      STATE.detail = cached;
+      STATE.currentRequestId = requestId;
+      fillForm(cached);
+    } else {
+      $('statusPanel').innerHTML = '';
+      skeleton($('statusPanel'), 2);
+    }
+
+    return api('getRequest', { requestId: requestId },
+      { message: cached ? 'กำลังตรวจสอบข้อมูลล่าสุด...' : 'กำลังเปิดคำขอ...', done: '' })
       .then(function (res) {
+        STATE.detailCache[requestId] = res;
         STATE.detail = res;
         STATE.currentRequestId = requestId;
         STATE.removeFiles = {};
@@ -712,7 +737,7 @@
     $('btnUnlock').classList.toggle('hidden', !perm.canUnlock);
     $('btnLock').classList.toggle('hidden', !(perm.isSupply && r && r.IsLocked != 1 && r.Status === STATUS.APPROVED));
     $('btnCancel').classList.toggle('hidden', !perm.canCancel);
-    $('btnPrint').classList.toggle('hidden', !perm.canDownload);
+    $('btnPrint').classList.toggle('hidden', !STATE.currentRequestId);
     $('btnTrack').classList.toggle('hidden', !STATE.currentRequestId);
 
     setFormReadOnly(readOnly && !!STATE.currentRequestId);
@@ -920,7 +945,8 @@
       .then(function (res) {
         alertBox('formAlert', res.message, 'ok');
         STATE.currentRequestId = res.requestId;
-        return reload().then(function () { return openRequest(res.requestId); });
+        delete STATE.detailCache[res.requestId];
+        return openRequest(res.requestId).then(refreshListInBackground);
       })
       .catch(function (err) {
         idle();
@@ -951,7 +977,8 @@
       .then(function (res) {
         closeModal('reviewModal');
         alertBox('formAlert', res.message, 'ok');
-        return reload().then(function () { return openRequest(STATE.currentRequestId); });
+        delete STATE.detailCache[STATE.currentRequestId];
+        return openRequest(STATE.currentRequestId).then(refreshListInBackground);
       })
       .catch(function (err) { alertBox('reviewAlert', err.message, 'danger'); });
   }
@@ -978,7 +1005,8 @@
       .then(function (res) {
         closeModal('approvalModal');
         alertBox('formAlert', res.message, 'ok');
-        return reload().then(function () { return openRequest(STATE.currentRequestId); });
+        delete STATE.detailCache[STATE.currentRequestId];
+        return openRequest(STATE.currentRequestId).then(refreshListInBackground);
       })
       .catch(function (err) { idle(); alertBox('approvalAlert', err.message, 'danger'); });
   }
@@ -988,7 +1016,8 @@
     if (!lock && !reason) return;
     api('setLock', { requestId: STATE.currentRequestId, locked: lock ? 1 : 0, reason: reason },
       { message: 'กำลังปรับสถานะการล็อก...', done: lock ? 'ล็อกแล้ว' : 'ปลดล็อกแล้ว' })
-      .then(function () { return reload().then(function () { return openRequest(STATE.currentRequestId); }); });
+      .then(function () { delete STATE.detailCache[STATE.currentRequestId];
+        return openRequest(STATE.currentRequestId).then(refreshListInBackground); });
   }
 
   function cancelRequest() {
@@ -996,7 +1025,8 @@
     if (remark === null) return;
     api('cancelRequest', { requestId: STATE.currentRequestId, remark: remark },
       { message: 'กำลังยกเลิกคำขอ...', done: 'ยกเลิกคำขอแล้ว' })
-      .then(function () { return reload().then(function () { return openRequest(STATE.currentRequestId); }); });
+      .then(function () { delete STATE.detailCache[STATE.currentRequestId];
+        return openRequest(STATE.currentRequestId).then(refreshListInBackground); });
   }
 
   /* ==================== ติดตามความก้าวหน้า ==================== */
@@ -1303,15 +1333,13 @@
   }
 
   function box(v) { return (v == 1 || v === true) ? '☑' : '☐'; }
-  function dot(width, value) {
-    return '<span class="dotline" style="min-width:' + width + '">' + esc(value || '') + '</span>';
-  }
 
+  /** สร้างเอกสารตามแบบฟอร์มขอความเห็นชอบจัดซื้อจัดจ้าง ของ สสจ.นครนายก */
   function renderMemo(data) {
     var r = data.request || {};
     var items = data.items || [];
     var inspectors = data.inspectors || [];
-    var sig = data.creatorSignature || '';
+    var official = (data.permissions || {}).isOfficialCopy;
 
     var itemRows = items.map(function (it, i) {
       return '<tr><td class="center">' + thNum(i + 1) + '</td><td>' + esc(it.ItemName) + '</td>' +
@@ -1321,44 +1349,52 @@
         '<td class="right">' + thNum(money(it.UnitPrice)) + '</td>' +
         '<td class="right">' + thNum(money(it.TotalPrice)) + '</td>' +
         '<td class="right">' + thNum(money(it.LastPrice)) + '</td></tr>';
-    }).join('') || '<tr><td colspan="8">&nbsp;</td></tr>';
+    }).join('');
+    // แบบฟอร์มมีช่องว่างอย่างน้อย 3 บรรทัดเสมอ
+    for (var blank = items.length; blank < 3; blank++) {
+      itemRows += '<tr><td>&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>';
+    }
 
     var insRows = [0, 1, 2].map(function (i) {
       var ins = inspectors[i] || {};
-      return '<div>' + thNum(i + 1) + '. ' + dot('92mm', ins.FullName) + 'ตำแหน่ง' + dot('61mm', ins.Position) + '</div>' +
-        '<div>หมายเลขบัตรประชาชน' + dot('58mm', thNum(ins.CID || '')) + ' E-mail : ' + dot('52mm', ins.Email) + '</div>';
+      return '<div class="frow"><span>' + thNum(i + 1) + '.</span><span class="fill">' + esc(ins.FullName) +
+        '</span><span>ตำแหน่ง</span><span class="fill">' + esc(ins.Position) + '</span></div>' +
+        '<div class="frow"><span>หมายเลขบัตรประชาชน</span><span class="fill">' + thNum(ins.CID || '') +
+        '</span><span>E-mail address :</span><span class="fill">' + esc(ins.Email) + '</span></div>';
     }).join('');
 
-    var attachLine = attachmentTypes().map(function (t) {
-      var has = r['Attachment' + t.key] == 1 || splitLines(r['Attachment' + t.key + 'FileIds']).length > 0;
-      return box(has) + ' ' + esc(t.label) + ' จำนวน ' + thNum(count(r['Attachment' + t.key + 'Sheets'])) + ' แผ่น';
-    }).join(' &nbsp; ');
-
-    var signatureImg = sig
-      ? '<img class="signature-img" src="' + esc(sig.indexOf('data:') === 0 ? sig : 'data:image/png;base64,' + sig) + '" alt="">'
-      : 'ลงชื่อ................................................ผู้ขอใช้';
+    // ช่องแนบเอกสารตามแบบฟอร์ม (TOR/Spec รวมเป็นช่องเดียว) และเอกสารตามระเบียบใหม่ในบรรทัดถัดมา
+    var sheets = function (key) { return thNum(count(r['Attachment' + key + 'Sheets'])); };
+    var has = function (key) {
+      return r['Attachment' + key] == 1 || splitLines(r['Attachment' + key + 'FileIds']).length > 0;
+    };
 
     return '<div class="print-page" id="printPage">' +
       '<div style="display:grid;grid-template-columns:30mm 1fr 30mm;align-items:start">' +
       '<div class="garuda-wrap"><img class="garuda-img" src="' + esc(CFG.GARUDA_URL) + '" alt=""></div>' +
       '<div class="memo-title">บันทึกข้อความ</div><div></div></div>' +
 
-      '<div class="memo-row"><span class="bold">ส่วนราชการ</span> ' + dot('102mm', r.Department) +
-      '<span class="bold">โทร.</span> ' + dot('38mm', thNum(r.Phone || '')) + '</div>' +
-      '<div class="memo-row"><span class="bold">ที่</span> ' + dot('78mm', thNum(r.DocNoText || 'นย')) +
-      '<span class="bold">วันที่</span>' + dot('75mm', thNum(thaiDate(r.RequestDate))) + '</div>' +
-      '<div class="memo-row"><span class="bold">เรื่อง</span> ขอความเห็นชอบ' + esc(r.PurchaseType || 'ซื้อ/จ้าง') +
-      ' <span style="border-bottom:1px dotted #111">' + esc(r.Subject) + '</span></div>' +
+      '<div class="frow"><span class="bold">ส่วนราชการ</span><span class="fill">' + esc(r.Department) +
+      '</span><span class="bold">โทร.</span><span class="fill w-md">' + thNum(r.Phone || '') + '</span></div>' +
+      '<div class="frow"><span class="bold">ที่</span><span>นย</span><span class="fill">' +
+      thNum(r.DocNoText || '') + '</span><span class="bold">วันที่</span><span class="fill w-md">' +
+      thNum(thaiDate(r.RequestDate)) + '</span></div>' +
+      '<div class="frow"><span class="bold">เรื่อง</span><span>ขอความเห็นชอบซื้อ/จ้าง</span>' +
+      '<span class="fill">' + esc(r.Subject) + '</span></div>' +
       '<hr class="top-rule">' +
-      '<div class="memo-row"><span class="bold">เรียน</span> ' + esc(r.To || 'นายแพทย์สาธารณสุขจังหวัดนครนายก') + '</div>' +
 
-      '<div class="memo-row indent">ด้วย' + dot('45mm', r.Department) + 'มีความประสงค์ขอความเห็นชอบ' +
-      esc(r.PurchaseType || 'ซื้อ/จ้าง') + ' <span style="border-bottom:1px dotted #111">' + esc(r.Subject) + '</span></div>' +
-      '<div class="memo-row">จำนวน ' + thNum(items.length) + ' รายการ โดยมีเหตุผลและความจำเป็น <span style="border-bottom:1px dotted #111">' +
+      '<div class="memo-row"><span class="bold">เรียน</span> ' +
+      esc(r.To || 'นายแพทย์สาธารณสุขจังหวัดนครนายก') + '</div>' +
+      '<div class="frow" style="padding-left:14mm"><span>ด้วย</span><span class="fill">' +
+      esc(r.Department) + '</span><span>มีความประสงค์ขอความเห็นชอบซื้อ/จ้าง</span>' +
+      '<span class="fill">' + esc(r.Subject) + '</span></div>' +
+      '<div class="frow"><span>จำนวน</span><span class="fill w-xs center">' + thNum(items.length) +
+      '</span><span>รายการ โดยมีเหตุผลและความจำเป็น</span><span class="fill-multi">' +
       esc(r.Reason) + '</span></div>' +
-      '<div class="memo-row">ซึ่ง ' + box(r.PurposeRegular) + ' ใช้ในงานประจำ ' + box(r.PurposeStock) + ' สำรองคลัง ' +
-      box(r.PurposeProject) + ' ใช้ในโครงการ <span style="border-bottom:1px dotted #111">' + esc(r.ProjectName) +
-      '</span> (ตามสำเนาที่แนบท้ายมาด้วย) มีรายละเอียดดังนี้</div>' +
+      '<div class="frow"><span>ซึ่ง ' + box(r.PurposeRegular) + ' ใช้ในงานประจำ ' +
+      box(r.PurposeStock) + ' สำรองคลัง ' + box(r.PurposeProject) + ' ใช้ในโครงการ</span>' +
+      '<span class="fill">' + esc(r.ProjectName) + '</span>' +
+      '<span>(ตามสำเนาที่แนบท้ายมาด้วย) มีรายละเอียดดังนี้</span></div>' +
 
       '<table class="print-table">' +
       '<colgroup><col style="width:10mm"><col style="width:44mm"><col style="width:23mm"><col style="width:17mm">' +
@@ -1366,50 +1402,68 @@
       '<thead>' +
       '<tr><th rowspan="2">ลำดับ</th><th rowspan="2">รายการ</th>' +
       '<th rowspan="2">คงเหลือ<br>ยกมาตามแผน<br>(บาท)</th>' +
-      '<th colspan="4">ความต้องการ' + esc(r.PurchaseType || 'ซื้อ/จ้าง') + 'ครั้งนี้</th>' +
+      '<th colspan="4">ความต้องการซื้อ/จ้างครั้งนี้</th>' +
       '<th rowspan="2">ราคาซื้อ<br>หลังสุด</th></tr>' +
       '<tr><th>จำนวน</th><th>หน่วยนับ</th><th>ราคา/หน่วย</th><th>ราคารวม</th></tr>' +
       '</thead><tbody>' + itemRows + '</tbody>' +
-      '<tfoot><tr><th colspan="6" class="right">ราคารวม</th><th class="right">' + thNum(money(r.TotalAmount)) + '</th><th></th></tr></tfoot></table>' +
+      '<tfoot><tr><th colspan="6" class="right">ราคารวม</th><th class="right">' +
+      thNum(money(r.TotalAmount)) + '</th><th></th></tr></tfoot></table>' +
 
-      '<div class="memo-row print-small">พร้อมนี้ได้แนบ ' + attachLine + '</div>' +
+      '<div class="frow" style="padding-left:14mm"><span>พร้อมนี้ได้แนบ ' + box(has('Tor') || has('Spec')) +
+      ' รายละเอียดคุณลักษณะเฉพาะ/ร่างขอบเขตงาน จำนวน</span><span class="fill w-xs center">' +
+      sheets(has('Tor') ? 'Tor' : 'Spec') + '</span><span>แผ่น ' + box(has('Quote')) +
+      ' ใบเสนอราคา จำนวน</span><span class="fill w-xs center">' + sheets('Quote') + '</span><span>แผ่น</span></div>' +
+      '<div class="frow"><span>' + box(has('BudgetPlan')) + ' แผนการใช้งบประมาณ จำนวน</span>' +
+      '<span class="fill w-xs center">' + sheets('BudgetPlan') + '</span><span>แผ่น ' + box(has('Project')) +
+      ' โครงการ จำนวน</span><span class="fill w-xs center">' + sheets('Project') + '</span><span>แผ่น</span>' +
+      '<span class="fill"></span></div>' +
       '<div class="memo-row">และขอแต่งตั้งคณะกรรมการตรวจรับพัสดุ/ผู้ตรวจรับพัสดุ ดังนี้</div>' +
-      '<div class="print-small">' + insRows + '</div>' +
-      '<div class="memo-row">จึงเรียนมาเพื่อโปรดพิจารณาและเห็นชอบต่อไป</div>' +
+      '<div class="print-small" style="padding-left:8mm">' + insRows + '</div>' +
 
-      '<table class="sign-table"><tr><td class="sig-left">' +
-      '<div class="sig-block">' + signatureImg + '</div>' +
-      '<div class="sign-center">( ' + esc(r.CreatedByName) + ' )</div>' +
-      '<div class="sign-center">' + esc(r.CreatedByPosition) + '</div>' +
-      '<div class="sig-block">ลงชื่อ................................................หัวหน้ากลุ่มงาน</div>' +
-      '<div class="sign-center">( ' + esc(r.DeptHeadName) + ' )</div>' +
-      '<div class="bold" style="margin-top:6px">ความเห็นของงานแผน/กลุ่มงานยุทธศาสตร์ฯ</div>' +
-      '<div>' + box(r.PlanInPlan) + ' ในแผนปี พ.ศ. ' + dot('31mm', thNum(r.PlanYear || '')) + '</div>' +
-      '<div>ประเภทงบประมาณ ' + dot('52mm', r.BudgetType) + '</div>' +
-      '<div>จัดซื้อด้วยเงิน' + dot('60mm', r.PlanBudgetSource) + '</div>' +
-      '<div>จำนวนเงิน' + dot('63mm', thNum(money(r.PlanAmount || r.TotalAmount))) + 'บาท</div>' +
-      '<div style="margin-top:3px">' + dot('100%', r.PlanRemark) + '</div>' +
-      '</td><td class="sig-right print-small">' +
-      '<div class="center bold">ความเห็นของเจ้าหน้าที่/หัวหน้าเจ้าหน้าที่</div>' +
+      '<table class="sign-table"><tr>' +
+      '<td class="sig-left">' +
+      '<div class="memo-row">จึงเรียนมาเพื่อโปรดพิจารณาและเห็นชอบต่อไป</div>' +
+      '<div class="sig-block">ลงชื่อ...........................................ผู้ขอใช้</div>' +
+      '<div class="sign-center">( ' + esc(r.CreatedByName || '...........................................') + ' )</div>' +
+      '<div class="sig-block">ลงชื่อ.......................................หัวหน้ากลุ่มงาน</div>' +
+      '<div class="sign-center">( ' + esc(r.DeptHeadName || '...........................................') + ' )</div>' +
+      '<div class="bold" style="margin-top:4mm">ความเห็นของงานแผน/กลุ่มงานยุทธศาสตร์ฯ</div>' +
+      '<div class="frow"><span>' + box(r.PlanInPlan) + ' ในแผนปี พ.ศ.</span><span class="fill">' +
+      thNum(r.PlanYear || '') + '</span></div>' +
+      '<div class="frow"><span>' + box(r.PlanOther) + ' อื่นๆ</span><span class="fill">' +
+      esc(r.PlanOther) + '</span></div>' +
+      '<div class="frow"><span>' + box(r.PlanBudgetSource) + ' จัดซื้อด้วยเงิน</span><span class="fill">' +
+      esc(r.PlanBudgetSource) + '</span></div>' +
+      '<div class="frow" style="padding-left:6mm"><span>จำนวนเงิน</span><span class="fill">' +
+      thNum(money(r.PlanAmount || r.TotalAmount)) + '</span><span>บาท</span></div>' +
+      '<div class="frow" style="margin-top:6mm"><span class="fill"></span><span>/</span><span class="fill"></span></div>' +
+      '</td>' +
+
+      '<td class="sig-right print-small">' +
+      '<div class="center bold" style="text-decoration:underline">ความเห็นของเจ้าหน้าที่/หัวหน้าเจ้าหน้าที่</div>' +
       '<div>' + box(r.OfficerOpinionAnnualUnder100k) + ' เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี ไม่เกิน ๑ แสนบาท</div>' +
       '<div>' + box(r.OfficerOpinionAnnualOver100k) + ' เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี เกิน ๑ แสนบาท</div>' +
       '<div>' + box(r.OfficerMethod === 'เฉพาะเจาะจง') + ' เห็นควรจัดซื้อ/จ้างโดยวิธีเฉพาะเจาะจง</div>' +
       '<div>' + box(r.OfficerMethod === 'คัดเลือก') + ' เห็นควรจัดซื้อ/จ้างโดยวิธีคัดเลือก</div>' +
-      '<div>' + box(String(r.OfficerMethod || '').indexOf('e-market') > -1) + ' วิธีตลาดอิเล็กทรอนิกส์ (e-market)</div>' +
-      '<div>' + box(String(r.OfficerMethod || '').indexOf('e-bidding') > -1) + ' วิธีประกวดราคาอิเล็กทรอนิกส์ (e-bidding)</div>' +
-      '<div>' + box(r.OfficerMethodInProgress) + ' เฉพาะเจาะจงก่อน เนื่องจากอยู่ระหว่างดำเนินการโดยวิธี ' +
-      box(r.OfficerInProgressMethod === 'e-market') + ' e-market ' + box(r.OfficerInProgressMethod === 'e-bidding') + ' e-bidding</div>' +
-      '<div>กำหนดแล้วเสร็จประมาณ' + dot('18mm', thNum(count(r.CompletionDays))) + 'วัน นับถัดจากวันที่ได้รับใบสั่งซื้อ/สั่งจ้าง</div>' +
-      '<div>' + esc(r.OfficerReason) + '</div>' +
+      '<div>' + box(String(r.OfficerMethod || '').indexOf('e-market') > -1) + ' เห็นควรจัดซื้อโดยวิธีตลาดอิเล็กทรอนิกส์ (e-market)</div>' +
+      '<div>' + box(String(r.OfficerMethod || '').indexOf('e-bidding') > -1) + ' เห็นควรจัดซื้อ/จ้างโดยวิธีประกวดราคาอิเล็กทรอนิกส์ (e-bidding)</div>' +
+      '<div>' + box(r.OfficerMethodInProgress) + ' เห็นควรจัดซื้อโดยวิธีเฉพาะเจาะจงก่อน เนื่องจากอยู่ระหว่าง</div>' +
+      '<div>ดำเนินการจัดซื้อ/จ้างโดยวิธี ' + box(r.OfficerInProgressMethod === 'e-market') + ' e-market ' +
+      box(r.OfficerInProgressMethod === 'e-bidding') + ' e-bidding</div>' +
+      '<div class="frow"><span>กำหนดแล้วเสร็จประมาณ</span><span class="fill w-xs center">' +
+      thNum(count(r.CompletionDays)) + '</span><span>วัน นับถัดจากวันที่ได้รับใบสั่งซื้อ/สั่งจ้าง</span></div>' +
+      '<div>' + esc(r.OfficerReason || 'เนื่องจากมีความจำเป็นต้องใช้ในงานราชการของ สสจ.นครนายก') + '</div>' +
       '<div class="sig-block">ลงชื่อ.......................................เจ้าหน้าที่</div>' +
-      '<div class="sign-center">( ' + esc(r.OfficerName) + ' )</div>' +
-      '<div class="sig-block">ลงชื่อ.......................................หัวหน้าเจ้าหน้าที่</div>' +
-      '<div class="sign-center">( ' + esc(r.DeptHeadName) + ' )</div>' +
-      '<div class="approval">เห็นชอบ</div>' +
-      '<div class="sig-block">ลงชื่อ.......................................</div>' +
-      '<div class="sign-center">( ' + esc(r.ApproverName || '.....................................................') + ' )</div>' +
+      '<div class="sign-center">( ' + esc(r.OfficerName || '...........................................') + ' )</div>' +
+      '<div class="sig-block">ลงชื่อ.................................หัวหน้าเจ้าหน้าที่</div>' +
+      '<div class="sign-center">( ' + esc(r.DeptHeadName || '...........................................') + ' )</div>' +
+      '<div class="approval" style="margin-top:3mm">เห็นชอบ</div>' +
+      '<div class="sig-block-lg" style="min-height:14mm"></div>' +
+      '<div class="sign-center">( ' + esc(r.ApproverName || '...........................................') + ' )</div>' +
       '<div class="sign-center">' + esc(r.ApproverPosition || 'นายแพทย์สาธารณสุขจังหวัดนครนายก') + '</div>' +
-      '</td></tr></table></div>';
+      '</td></tr></table>' +
+      (official ? '' : '<div class="draft-mark">ฉบับร่าง — ยังไม่ผ่านการตรวจสอบของเจ้าหน้าที่พัสดุ</div>') +
+      '</div>';
   }
 
   function renderExecutiveReport() {
