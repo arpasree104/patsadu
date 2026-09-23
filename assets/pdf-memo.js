@@ -13,9 +13,9 @@
   var DOT = { dash: { length: 1.2, space: 1.3 } };
 
   // ช่วงอักขระไทยที่ต้องเกาะกับพยัญชนะตัวหน้า (สระบน-ล่าง วรรณยุกต์) และสระหน้า
-  var THAI_COMBINING = /[\u0E31\u0E34-\u0E3A\u0E47-\u0E4E]/;
-  var THAI_LEAD_VOWEL = /[\u0E40-\u0E44]/;
-  var THAI_CHAR = /[\u0E01-\u0E5B]/;
+  var THAI_COMBINING = /[ัิ-ฺ็-๎]/;
+  var THAI_LEAD_VOWEL = /[เ-ไ]/;
+  var THAI_CHAR = /[ก-๛]/;
 
   /**
    * pdfmake ตัดบรรทัดภาษาไทยไม่ได้เพราะไม่มีช่องว่างคั่นคำ ข้อความยาวจึงล้นขอบกระดาษ
@@ -28,20 +28,21 @@
       var ch = s[i], next = s[i + 1];
       out += ch;
       if (!next) continue;
-      if (ch === '@' && /[A-Za-z0-9]/.test(next)) { out += '\u200B'; continue; }
-      if (/[._\-\/]/.test(ch) && /[A-Za-z]/.test(next)) { out += '\u200B'; continue; }
+      if (ch === '@' && /[A-Za-z0-9]/.test(next)) { out += '​'; continue; }
+      if (/[._\-\/]/.test(ch) && /[A-Za-z]/.test(next)) { out += '​'; continue; }
       if (!THAI_CHAR.test(ch) || !THAI_CHAR.test(next)) continue;
       if (THAI_COMBINING.test(next) || THAI_LEAD_VOWEL.test(ch)) continue;
-      out += '\u200B';
+      out += '​';
     }
     return out;
   }
 
-  /** เดินทั้งโครงเอกสารแล้วใส่จุดตัดบรรทัดให้ทุกข้อความ */
+  /** เดินทั้งโครงเอกสารแล้วใส่จุดตัดบรรทัดให้ทุกข้อความ (รวมถึงข้อความที่เป็น run หลายชิ้นในอาร์เรย์ text: [...]) */
   function applyThaiBreak(node) {
     if (Array.isArray(node)) { node.forEach(applyThaiBreak); return node; }
     if (!node || typeof node !== 'object') return node;
     if (typeof node.text === 'string') node.text = thaiBreak(node.text);
+    else if (Array.isArray(node.text)) applyThaiBreak(node.text);
     ['columns', 'stack', 'content', 'table'].forEach(function (key) {
       if (node[key]) applyThaiBreak(node[key]);
     });
@@ -57,8 +58,8 @@
 
   /** ช่องติ๊กวาดด้วยเส้น ให้หน้าตาเหมือนแบบฟอร์มและไม่ขึ้นกับฟอนต์ */
   function cb(checked, size) {
-    var s = size || 9.5;
-    var top = size ? 3 : 4.5;
+    var s = size || 8.5;
+    var top = size ? 3 : 4;
     var shapes = [{ type: 'rect', x: 0, y: top, w: s, h: s, lineWidth: 0.7, lineColor: '#000' }];
     if (truthy(checked)) {
       shapes.push(
@@ -69,7 +70,7 @@
     return { width: s + 2.5, canvas: shapes };
   }
 
-  /** ช่องเติมข้อความที่มีเส้นประอยู่ใต้บรรทัด */
+  /** ช่องเติมข้อความที่มีเส้นประอยู่ใต้บรรทัด — ใช้กับฟิลด์สั้นๆ ที่วางเป็นคอลัมน์คงที่เท่านั้น */
   function uline(text, width, options) {
     options = options || {};
     return {
@@ -95,8 +96,17 @@
     };
   }
 
+  /**
+   * เติมค่าใน run ข้อความที่ไหลเป็นคอลัมน์เดียว (ตัดบรรทัดได้เอง ไม่ล้นขอบกระดาษ)
+   * ใช้ตัวหนาเน้นค่าที่กรอก แทนขีดเส้นใต้ เพราะ decoration:'underline' ของ pdfmake ลากเส้นเลอะ
+   * ไปทับข้อความ run อื่นที่อยู่บรรทัดเดียวกันโดยไม่ตั้งใจ (ตรวจสอบแล้วด้วยการเรนเดอร์จริง)
+   */
+  function fillRun(text) {
+    return { text: (text === null || text === undefined || text === '' ? ' ' : String(text)), bold: true };
+  }
+
   function label(text) {
-    return { width: 'auto', text: text, bold: true, fontSize: 20, noWrap: true };
+    return { width: 'auto', text: text, bold: true, fontSize: 16, noWrap: true };
   }
 
   function plain(text, options) {
@@ -132,7 +142,7 @@
       text: '( ' + (name || '                                        ') + ' )',
       alignment: 'center',
       fontSize: fontSize,
-      margin: [0, 0, 0, marginBottom === undefined ? 12 : marginBottom]
+      margin: [0, 0, 0, marginBottom === undefined ? 10 : marginBottom]
     };
   }
 
@@ -157,7 +167,8 @@
     var official = ((data && data.permissions) || {}).isOfficialCopy;
 
     var thNum = fmt.thNum, money = fmt.money, count = fmt.count, thaiDate = fmt.thaiDate;
-    var SM = 13.5; // ขนาดตัวอักษรคอลัมน์ความเห็นเจ้าหน้าที่
+    var SM = 11.5; // ขนาดตัวอักษรคอลัมน์ความเห็นเจ้าหน้าที่
+    var IF = 11.5; // ขนาดตัวอักษรรายชื่อกรรมการตรวจรับ
 
     var sheets = function (key) { return thNum(count(r['Attachment' + key + 'Sheets'])); };
     var has = function (key) {
@@ -204,23 +215,30 @@
       { text: '' }
     ]);
 
-    /* ---------- รายชื่อกรรมการตรวจรับ ---------- */
+    /* ---------- รายชื่อกรรมการตรวจรับ — คอลัมน์เดียว หนึ่งชื่อต่อหนึ่งบรรทัด ไหลตามความยาวข้อความจริง ---------- */
     var inspectorRows = [];
     [0, 1, 2].forEach(function (i) {
       var ins = inspectors[i] || {};
-      var IF = 14.5; // ขนาดตัวอักษรแถวกรรมการตรวจรับ ย่อลงเพื่อให้เลขบัตรประชาชนไม่ล้นคอลัมน์
-      inspectorRows.push(row([
-        plain(thNum(i + 1) + '.', { width: 22, alignment: 'right', fontSize: IF }),
-        uline(ins.FullName, '*', { fontSize: IF }),
-        plain('ตำแหน่ง', { fontSize: IF }),
-        uline(ins.Position, 140, { fontSize: IF })
-      ]));
-      inspectorRows.push(row([
-        plain('หมายเลขบัตรประชาชน', { fontSize: IF }),
-        uline(thNum(ins.CID || ''), 150, { noWrap: true, fontSize: IF }),
-        plain('E-mail address :', { fontSize: IF }),
-        uline(ins.Email, '*', { fontSize: IF })
-      ], 3));
+      inspectorRows.push({
+        text: [
+          { text: thNum(i + 1) + '. ' },
+          fillRun(ins.FullName),
+          { text: '   ตำแหน่ง ' },
+          fillRun(ins.Position)
+        ],
+        fontSize: IF,
+        margin: [0, 0, 0, 0]
+      });
+      inspectorRows.push({
+        text: [
+          { text: 'หมายเลขบัตรประชาชน ' },
+          fillRun(thNum(ins.CID || '')),
+          { text: '   E-mail address : ' },
+          fillRun(ins.Email)
+        ],
+        fontSize: IF,
+        margin: [16, 0, 0, 4]
+      });
     });
 
     /* ---------- ช่องลงนาม 2 คอลัมน์ ---------- */
@@ -251,7 +269,7 @@
     var rightStack = [
       {
         text: 'ความเห็นของเจ้าหน้าที่/หัวหน้าเจ้าหน้าที่',
-        bold: true, alignment: 'center', decoration: 'underline', fontSize: 14.5, margin: [0, 0, 0, 3]
+        bold: true, alignment: 'center', decoration: 'underline', fontSize: 12, margin: [0, 0, 0, 3]
       },
       opt(r.OfficerOpinionAnnualUnder100k, 'เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี ไม่เกิน ๑ แสนบาท'),
       opt(r.OfficerOpinionAnnualOver100k, 'เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี เกิน ๑ แสนบาท'),
@@ -291,10 +309,10 @@
         text: r.OfficerReason || 'เนื่องจากมีความจำเป็นต้องใช้ในงานราชการของ สสจ.นครนายก',
         fontSize: SM, margin: [0, 0, 0, 10]
       },
-      signLine('เจ้าหน้าที่', 14.5),
-      nameLine(r.OfficerName, 14.5, 10),
-      signLine('หัวหน้าเจ้าหน้าที่', 14.5),
-      nameLine(r.DeptHeadName, 14.5, 4),
+      signLine('เจ้าหน้าที่', 12),
+      nameLine(r.OfficerName, 12, 10),
+      signLine('หัวหน้าเจ้าหน้าที่', 12),
+      nameLine(r.DeptHeadName, 12, 4),
       { text: 'เห็นชอบ', bold: true, alignment: 'center', margin: [0, 0, 0, 22] },
       nameLine(r.ApproverName, undefined, 0),
       { text: r.ApproverPosition || 'นายแพทย์สาธารณสุขจังหวัดนครนายก', alignment: 'center' }
@@ -308,7 +326,7 @@
       {
         columns: [
           garudaDataUrl ? { width: 88, image: 'garuda', height: 42 } : { width: 88, text: ' ' },
-          { width: '*', text: 'บันทึกข้อความ', bold: true, fontSize: 29, alignment: 'center' },
+          { width: '*', text: 'บันทึกข้อความ', bold: true, fontSize: 23, alignment: 'center' },
           { width: 88, text: ' ' }
         ],
         margin: [0, 0, 0, 3]
@@ -321,30 +339,32 @@
         margin: [0, 4, 0, 6]
       },
       row([label('เรียน'), plain(r.To || 'นายแพทย์สาธารณสุขจังหวัดนครนายก')], 5),
-      row([
-        plain('ด้วย', { width: 70, alignment: 'right' }),
-        uline(r.Department, '*'),
-        plain('มีความประสงค์ขอความเห็นชอบซื้อ/จ้าง')
-      ]),
-      row([uline(r.Subject, '*')]),
-      row([
-        plain('จำนวน'),
-        uline(thNum(items.length), 32, { alignment: 'center', noWrap: true }),
-        plain('รายการ โดยมีเหตุผลและความจำเป็น'),
-        uline(r.Reason, '*')
-      ]),
-      row([uline('', '*')]),
-      row([
-        plain('ซึ่ง'), cb(r.PurposeRegular), plain('ใช้ในงานประจำ'),
-        cb(r.PurposeStock), plain('สำรองคลัง'),
-        cb(r.PurposeProject), plain('ใช้ในโครงการ'),
-        uline(r.ProjectName, '*')
-      ]),
+      // ย่อหน้าบรรยายเดียวไหลต่อเนื่อง (คอลัมน์เดียว) แทนการตัดเป็นหลายแถวคงที่ — แก้ไข/ตัดบรรทัดตามความยาวข้อความจริงได้เอง
+      {
+        text: [
+          { text: 'ด้วย ' }, fillRun(r.Department),
+          { text: ' มีความประสงค์ขอความเห็นชอบซื้อ/จ้าง ' }, fillRun(r.Subject),
+          { text: ' จำนวน ' }, fillRun(thNum(items.length)),
+          { text: ' รายการ โดยมีเหตุผลและความจำเป็น ' }, fillRun(r.Reason)
+        ],
+        margin: [0, 0, 0, 4]
+      },
+      {
+        columns: [
+          plain('ซึ่ง', { width: 20 }),
+          cb(r.PurposeRegular), plain('ใช้ในงานประจำ', { width: 62 }),
+          cb(r.PurposeStock), plain('สำรองคลัง', { width: 52 }),
+          cb(r.PurposeProject), plain('ใช้ในโครงการ'),
+          uline(r.ProjectName, '*')
+        ],
+        columnGap: 3,
+        margin: [0, 0, 0, 5]
+      },
       { text: '(ตามสำเนาที่แนบท้ายมาด้วย) มีรายละเอียดดังนี้', margin: [0, 0, 0, 5] },
       {
         table: { headerRows: 2, widths: [26, '*', 44, 30, 40, 54, 76, 48], body: body },
         layout: ITEM_LAYOUT,
-        fontSize: 14,
+        fontSize: 12,
         margin: [0, 0, 0, 6]
       },
       row([
@@ -377,14 +397,14 @@
     if (!official) {
       content.push({
         text: 'ฉบับร่าง — ยังไม่ผ่านการตรวจสอบของเจ้าหน้าที่พัสดุ',
-        alignment: 'center', color: '#b91c1c', bold: true, fontSize: 13, margin: [0, 10, 0, 0]
+        alignment: 'center', color: '#b91c1c', bold: true, fontSize: 11, margin: [0, 10, 0, 0]
       });
     }
 
     var doc = {
       pageSize: 'A4',
       pageMargins: PAGE_MARGIN,
-      defaultStyle: { font: 'Sarabun', fontSize: 16, lineHeight: 1 },
+      defaultStyle: { font: 'Sarabun', fontSize: 13, lineHeight: 1 },
       content: content
     };
     if (garudaDataUrl) doc.images = { garuda: garudaDataUrl };

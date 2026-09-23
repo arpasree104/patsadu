@@ -274,19 +274,15 @@
     if (!username || !password) { alertBox('loginAlert', 'กรุณากรอกชื่อผู้ใช้และรหัสผ่าน', 'danger'); return; }
 
     $('loginBtn').disabled = true;
-    api('login', { username: username, password: password, client: navigator.userAgent },
-      { anonymous: true, message: 'กำลังตรวจสอบสิทธิเข้าใช้งาน...', done: 'เข้าสู่ระบบสำเร็จ' })
+    show('appView');
+    skeleton($('kpiGrid'), 4);
+    // รวมการเข้าสู่ระบบกับการโหลดข้อมูลตั้งต้นไว้ในคำสั่งเดียว (ดู action "login" ใน code.gs)
+    // แทนที่จะเรียก login แล้วต่อด้วย bootstrap อีกครั้ง — ลดรอบการติดต่อเซิร์ฟเวอร์ลงครึ่งหนึ่ง เปิดระบบได้เร็วขึ้น
+    api('login', { username: username, password: password, client: navigator.userAgent, filters: currentFilters() },
+      { anonymous: true, message: 'กำลังเข้าสู่ระบบ...', done: 'เข้าสู่ระบบสำเร็จ' })
       .then(function (res) {
         STATE.token = res.token;
-        STATE.user = res.user;
-        STATE.publicMode = false;
-        localStorage.setItem(CFG.SESSION_KEY, JSON.stringify({ token: res.token, user: res.user }));
-        show('appView');
-        applyUserChrome();
-        // โหลดข้อมูลล้มเหลวไม่ใช่การเข้าสู่ระบบล้มเหลว — คงเซสชันไว้แล้วให้กดโหลดใหม่ได้
-        return bootstrap().catch(function (err) {
-          idle('เข้าสู่ระบบแล้ว แต่โหลดข้อมูลไม่สำเร็จ: ' + err.message, true);
-        });
+        applyBootstrapResult(res);
       })
       .catch(function (err) {
         localStorage.removeItem(CFG.SESSION_KEY);
@@ -299,11 +295,28 @@
   }
 
   function logout() {
-    api('logout', {}, { message: 'กำลังออกจากระบบ...', done: 'ออกจากระบบแล้ว' }).catch(function () { });
+    // ไม่รอผลลัพธ์จากเซิร์ฟเวอร์ (message:false) เพื่อไม่ให้แถบสถานะค้างแสดง "กำลังออกจากระบบ..."
+    // ระหว่างที่ Apps Script ตอบกลับช้า — ล้างข้อมูลทั้งหมดในเครื่องและพากลับหน้าเข้าสู่ระบบได้ทันที
+    api('logout', {}, { message: false }).catch(function () { });
     localStorage.removeItem(CFG.SESSION_KEY);
+    resetClientState();
+    showLogin();
+  }
+
+  /** ล้างข้อมูลผู้ใช้/คำขอที่ค้างอยู่ในหน่วยความจำหน้าเว็บทั้งหมด กันไม่ให้เห็นข้อมูลของผู้ใช้ก่อนหน้าเมื่อมีคนอื่นมาเข้าสู่ระบบต่อในเครื่องเดียวกัน */
+  function resetClientState() {
     STATE.token = '';
     STATE.user = null;
-    showLogin();
+    STATE.users = [];
+    STATE.settings = {};
+    STATE.requests = [];
+    STATE.dashboard = null;
+    STATE.detail = null;
+    STATE.detailCache = {};
+    STATE.currentRequestId = '';
+    STATE.removeFiles = {};
+    $('currentUserName').textContent = '-';
+    $('currentUserMeta').textContent = '-';
   }
 
   function bootstrap() {
@@ -311,23 +324,26 @@
     skeleton($('kpiGrid'), 4);
     return api('bootstrap', { filters: currentFilters() },
       { message: 'กำลังโหลดข้อมูลระบบ...', done: 'โหลดข้อมูลเรียบร้อย' })
-      .then(function (res) {
-        STATE.publicMode = false;
-        STATE.user = res.user;
-        localStorage.setItem(CFG.SESSION_KEY, JSON.stringify({ token: STATE.token, user: res.user }));
-        STATE.users = res.users || [];
-        STATE.settings = res.settings || {};
-        STATE.meta = res.meta || STATE.meta;
-        STATE.requests = res.requests || [];
-        STATE.dashboard = res.dashboard;
-        applyUserChrome();
-        fillStaticOptions();
-        renderDashboard();
-        renderList();
-        renderSettings();
-        fillTrackSelect();
-        $('lastSync').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
-      });
+      .then(applyBootstrapResult);
+  }
+
+  /** ใช้ร่วมกันทั้งตอนเข้าสู่ระบบและตอนโหลดข้อมูลระบบใหม่ เพราะ action login และ bootstrap คืนรูปแบบข้อมูลเดียวกัน */
+  function applyBootstrapResult(res) {
+    STATE.publicMode = false;
+    STATE.user = res.user;
+    localStorage.setItem(CFG.SESSION_KEY, JSON.stringify({ token: STATE.token, user: res.user }));
+    STATE.users = res.users || [];
+    STATE.settings = res.settings || {};
+    STATE.meta = res.meta || STATE.meta;
+    STATE.requests = res.requests || [];
+    STATE.dashboard = res.dashboard;
+    applyUserChrome();
+    fillStaticOptions();
+    renderDashboard();
+    renderList();
+    renderSettings();
+    fillTrackSelect();
+    $('lastSync').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
   }
 
   function viewPublicDashboard() {
@@ -375,6 +391,11 @@
     fillSelect('progressStage', stages, '');
     fillSelect('fltBudgetType', (s.budgetTypes || STATE.meta.budgetTypes || []), 'ทั้งหมด');
     fillSelect('budgetType', (s.budgetTypes || STATE.meta.budgetTypes || []), 'เลือกประเภทงบประมาณ');
+    // ตัวเลือกเหล่านี้ผู้ดูแลระบบกำหนดเองได้ที่หน้าตั้งค่า → ตัวเลือกในระบบ (มีค่าตั้งต้นถ้ายังไม่เคยกำหนด)
+    fillSelect('purchaseType', (s.purchaseTypes && s.purchaseTypes.length) ? s.purchaseTypes : ['ซื้อ', 'จ้าง', 'ซื้อ/จ้าง']);
+    fillSelect('officerMethod', (s.officerMethods && s.officerMethods.length) ? s.officerMethods
+      : ['เฉพาะเจาะจง', 'คัดเลือก', 'ตลาดอิเล็กทรอนิกส์ (e-market)', 'ประกวดราคาอิเล็กทรอนิกส์ (e-bidding)']);
+    fillSelect('officerInProgressMethod', (s.inProgressMethods && s.inProgressMethods.length) ? s.inProgressMethods : ['e-market', 'e-bidding'], '');
 
     var departments = uniq(STATE.requests.map(function (r) { return r.department; })
       .concat(STATE.users.map(function (u) { return u.department; }))).filter(Boolean).sort();
@@ -747,14 +768,17 @@
   }
 
   function updateFormButtons(perm, r) {
-    var readOnly = false;
+    var generalReadOnly = false, officerReadOnly = false;
     if (!perm) {
-      perm = { canEdit: true, canSubmit: true };
+      perm = { canEdit: true, canSubmit: true, canEditOfficerSection: true };
     } else {
-      readOnly = !perm.canEdit;
+      generalReadOnly = !perm.canEdit;
+      officerReadOnly = !perm.canEditOfficerSection;
     }
     $('btnSaveDraft').classList.toggle('hidden', !perm.canEdit);
     $('btnSaveSubmit').classList.toggle('hidden', !perm.canEdit);
+    // ปุ่มบันทึกส่วนที่ 5 แยกต่างหาก — ให้เจ้าหน้าที่พัสดุบันทึกความเห็นได้แม้คำขอจะยังแก้ไขส่วนอื่นไม่ได้ (เช่น กำลังรอตรวจสอบ)
+    $('btnSaveOfficerOpinion').classList.toggle('hidden', !perm.canEditOfficerSection || !STATE.currentRequestId);
     $('btnReviewPass').classList.toggle('hidden', !perm.canReview);
     $('btnReviewReturn').classList.toggle('hidden', !perm.canReview);
     $('btnAttachApproval').classList.toggle('hidden', !perm.canAttachApproval);
@@ -764,15 +788,49 @@
     $('btnPrint').classList.toggle('hidden', !STATE.currentRequestId);
     $('btnTrack').classList.toggle('hidden', !STATE.currentRequestId);
 
-    setFormReadOnly(readOnly && !!STATE.currentRequestId);
+    setFormReadOnly(
+      generalReadOnly && !!STATE.currentRequestId,
+      officerReadOnly && !!STATE.currentRequestId
+    );
   }
 
-  function setFormReadOnly(readOnly) {
+  /**
+   * ส่วนที่ 5) ความเห็นเจ้าหน้าที่ / งานแผน แก้ไขได้แยกจากส่วนอื่นของฟอร์ม (การ์ด #officerSection)
+   * เพราะสิทธิแก้ไขของสองส่วนนี้ต่างกัน: ส่วนอื่นเป็นของผู้ยื่นคำขอ ส่วนที่ 5 เป็นของเจ้าหน้าที่พัสดุ
+   */
+  function setFormReadOnly(generalReadOnly, officerReadOnly) {
     var page = $('formPage');
+    var officerSection = $('officerSection');
     Array.prototype.forEach.call(page.querySelectorAll('input, select, textarea'), function (el) {
-      if (el.type === 'file') { el.disabled = readOnly; return; }
-      el.disabled = readOnly;
+      el.disabled = (officerSection && officerSection.contains(el)) ? officerReadOnly : generalReadOnly;
     });
+  }
+
+  /** บันทึกเฉพาะส่วนที่ 5) — action แยกต่างหากจาก saveRequest เพื่อให้เจ้าหน้าที่พัสดุบันทึกได้โดยไม่กระทบส่วนอื่น */
+  function saveOfficerOpinion() {
+    if (!STATE.currentRequestId) return;
+    alertBox('formAlert', '');
+    var payload = {
+      officerOpinionAnnualUnder100k: $('officerOpinionAnnualUnder100k').checked,
+      officerOpinionAnnualOver100k: $('officerOpinionAnnualOver100k').checked,
+      officerMethod: $('officerMethod').value,
+      officerMethodInProgress: $('officerMethodInProgress').checked,
+      officerInProgressMethod: $('officerInProgressMethod').value,
+      completionDays: $('completionDays').value, officerReason: $('officerReason').value,
+      officerName: $('officerName').value, officerPosition: $('officerPosition').value,
+      deptHeadName: $('deptHeadName').value, deptHeadPosition: $('deptHeadPosition').value,
+      budgetType: $('budgetType').value, planBudgetSource: $('planBudgetSource').value,
+      planInPlan: $('planInPlan').checked, planYear: $('planYear').value, planAmount: $('planAmount').value,
+      planOther: $('planOther').value, planRemark: $('planRemark').value
+    };
+    api('saveOfficerOpinion', { requestId: STATE.currentRequestId, payload: payload },
+      { message: 'กำลังบันทึกความเห็นเจ้าหน้าที่...', done: 'บันทึกเรียบร้อย' })
+      .then(function (res) {
+        alertBox('formAlert', res.message, 'ok');
+        delete STATE.detailCache[STATE.currentRequestId];
+        return openRequest(STATE.currentRequestId).then(refreshListInBackground);
+      })
+      .catch(function (err) { alertBox('formAlert', err.message, 'danger'); });
   }
 
   function addItemRow(data) {
@@ -1571,25 +1629,21 @@
         '<td class="bd"></td><td class="bd"></td><td class="bd"></td><td class="bd"></td></tr>';
     }
 
+    // คอลัมน์เดียว หนึ่งชื่อต่อหนึ่งบรรทัด — ใช้ย่อหน้าธรรมดาแทนตาราง ชื่อ/ตำแหน่งยาวแค่ไหนก็ตัดบรรทัดเองได้ตามปกติ
     var insRows = [0, 1, 2].map(function (i) {
       var ins = inspectors[i] || {};
-      return '<table class="t"><tr>' +
-        '<td width="26">' + thNum(i + 1) + '.</td>' +
-        '<td class="u">' + esc(ins.FullName) + '</td>' +
-        '<td width="70">ตำแหน่ง</td>' +
-        '<td class="u" width="200">' + esc(ins.Position) + '</td></tr></table>' +
-        '<table class="t"><tr>' +
-        '<td width="160">หมายเลขบัตรประชาชน</td>' +
-        '<td class="u" width="170">' + thNum(ins.CID || '') + '</td>' +
-        '<td width="130">E-mail address :</td>' +
-        '<td class="u">' + esc(ins.Email) + '</td></tr></table>';
+      return '<p class="p ins-line">' + thNum(i + 1) + '. <span class="u2">' + esc(ins.FullName || '') + '</span>' +
+        '&nbsp;&nbsp;ตำแหน่ง <span class="u2">' + esc(ins.Position || '') + '</span></p>' +
+        '<p class="p ins-line ins-sub">หมายเลขบัตรประชาชน <span class="u2">' + thNum(ins.CID || '') + '</span>' +
+        '&nbsp;&nbsp;E-mail address : <span class="u2">' + esc(ins.Email || '') + '</span></p>';
     }).join('');
 
     var body =
+      // ครุฑขนาดปกติ ไม่ขยาย คงสัดส่วนจริง วางไว้มุมซ้ายบน — กำหนดขนาดผ่าน style เป็น pt เพื่อไม่ให้ Word ปรับขนาดเองตาม DPI ของไฟล์ภาพ
       '<table class="t"><tr>' +
-      '<td width="110" valign="top"><img src="' + esc(CFG.GARUDA_URL) + '" height="57" alt=""></td>' +
+      '<td width="60" valign="top"><img src="' + esc(CFG.GARUDA_URL) + '" alt="" style="width:34pt;height:34pt"></td>' +
       '<td class="title" valign="middle">บันทึกข้อความ</td>' +
-      '<td width="110"></td></tr></table>' +
+      '</tr></table>' +
 
       '<table class="t"><tr>' +
       '<td class="lbl" width="115">ส่วนราชการ</td><td class="u">' + esc(r.Department) + '</td>' +
@@ -1604,18 +1658,13 @@
       '<div class="rule"></div>' +
 
       '<p class="p"><span class="lbl">เรียน</span> &nbsp;' + esc(r.To || 'นายแพทย์สาธารณสุขจังหวัดนครนายก') + '</p>' +
-      '<table class="t"><tr>' +
-      '<td width="90">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ด้วย</td><td class="u" width="230">' + esc(r.Department) + '</td>' +
-      '<td width="250">มีความประสงค์ขอความเห็นชอบซื้อ/จ้าง</td>' +
-      '<td class="u">' + esc(r.Subject) + '</td></tr></table>' +
-      '<table class="t"><tr>' +
-      '<td width="60">จำนวน</td><td class="u c" width="55">' + thNum(items.length) + '</td>' +
-      '<td width="245">รายการ โดยมีเหตุผลและความจำเป็น</td>' +
-      '<td class="u">' + esc(r.Reason) + '</td></tr></table>' +
-      '<table class="t"><tr>' +
-      '<td width="340">ซึ่ง ' + box(r.PurposeRegular) + ' ใช้ในงานประจำ ' + box(r.PurposeStock) +
-      ' สำรองคลัง ' + box(r.PurposeProject) + ' ใช้ในโครงการ</td>' +
-      '<td class="u">' + esc(r.ProjectName) + '</td></tr></table>' +
+      // ย่อหน้าบรรยายเดียวไหลต่อเนื่อง (คอลัมน์เดียว) แทนการตัดเป็นตารางหลายแถว — แก้ไขง่าย ตัดบรรทัดเองตามความยาวข้อความจริง
+      '<p class="p narrative">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ด้วย <span class="u2">' + esc(r.Department) + '</span> ' +
+      'มีความประสงค์ขอความเห็นชอบซื้อ/จ้าง <span class="u2">' + esc(r.Subject) + '</span> ' +
+      'จำนวน <span class="u2 c">' + thNum(items.length) + '</span> ' +
+      'รายการ โดยมีเหตุผลและความจำเป็น <span class="u2">' + esc(r.Reason) + '</span></p>' +
+      '<p class="p narrative">ซึ่ง ' + box(r.PurposeRegular) + ' ใช้ในงานประจำ ' + box(r.PurposeStock) +
+      ' สำรองคลัง ' + box(r.PurposeProject) + ' ใช้ในโครงการ <span class="u2">' + esc(r.ProjectName) + '</span></p>' +
       '<p class="p">(ตามสำเนาที่แนบท้ายมาด้วย) มีรายละเอียดดังนี้</p>' +
 
       '<table class="t bd-all">' +
@@ -1728,6 +1777,11 @@
       '.sm, .sm td, .sm p, .sm span { font-size: 14.5pt; }' +
       'div.rule { border-top: 1pt solid #000; margin: 3pt 0 4pt 0; font-size: 1pt; line-height: 1pt; }' +
       'div.ins { margin-left: 22pt; }' +
+      'p.narrative { text-align: justify; margin: 0 0 3pt 0; line-height: 1.15; }' +
+      'span.u2 { border-bottom: 1pt dotted #000; padding: 0 2pt; }' +
+      'span.u2.c { display: inline-block; min-width: 26pt; text-align: center; }' +
+      'p.ins-line { margin: 0 0 1pt 22pt; line-height: 1.15; }' +
+      'p.ins-sub { margin-bottom: 4pt; }' +
       'table.print-table { border-collapse: collapse; width: 100%; margin: 4pt 0; }' +
       'table.print-table td, table.print-table th { border: 1pt solid #000; padding: 1pt 3pt; }' +
       'table.print-table th { text-align: center; font-weight: bold; }' +
@@ -1846,7 +1900,7 @@
     applyFilters: applyFilters, clearFilters: clearFilters,
     renderList: renderList, openRequest: openRequest, newRequest: newRequest,
     addItemRow: addItemRow, addInspectorRow: addInspectorRow, syncBudgetType: syncBudgetType,
-    saveRequest: saveRequest, review: review, confirmReview: confirmReview,
+    saveRequest: saveRequest, saveOfficerOpinion: saveOfficerOpinion, review: review, confirmReview: confirmReview,
     openApprovalModal: openApprovalModal, submitApproval: submitApproval,
     toggleLock: toggleLock, cancelRequest: cancelRequest,
     openTrack: openTrack, openTrackFromForm: openTrackFromForm, loadTrack: loadTrack,
