@@ -178,17 +178,31 @@ function route_(e, method) {
     }, callback);
   }
 
+  PERF_T0 = Date.now();
+  PERF_MARKS = [];
   try {
     const handler = ACTIONS[action];
     if (!handler) throw new Error('ไม่รู้จักคำสั่ง: ' + action);
     clearTableCache_();
     const result = handler(payload) || {};
     if (result.ok === undefined) result.ok = true;
+    // เวลาที่ใช้ฝั่งเซิร์ฟเวอร์ แยกตามขั้นตอน — ดูได้ใน Executions ของ Apps Script และหน้าเว็บ (มุมล่างเมนูซ้าย)
+    result.serverMs = Date.now() - PERF_T0;
+    result.perf = PERF_MARKS;
+    console.log(action + ' ' + result.serverMs + 'ms | ' + PERF_MARKS.join(' | '));
     return jsonOut_(result, callback);
   } catch (err) {
     console.error(action + ' error: ' + (err && err.stack ? err.stack : err));
     return jsonOut_({ ok: false, error: String(err && err.message ? err.message : err) }, callback);
   }
+}
+
+let PERF_T0 = Date.now();
+let PERF_MARKS = [];
+
+/** บันทึกเวลาสะสมตั้งแต่เริ่มคำสั่ง ใช้หาว่าขั้นตอนไหนช้า */
+function mark_(label) {
+  PERF_MARKS.push(label + ' ' + (Date.now() - PERF_T0) + 'ms');
 }
 
 function apiVersion_() {
@@ -210,6 +224,7 @@ function jsonOut_(obj, callback) {
 
 const ACTIONS = {
   ping: function (p) { return { ok: true, time: nowText_(), version: apiVersion_() }; },
+  warmup: function (p) { return apiWarmup_(p); },
   setup: function (p) { return apiSetup_(p); },
 
   login: function (p) { return apiLogin_(p); },
@@ -259,14 +274,21 @@ function onOpen() {
 }
 
 function forceSetupSupplySystem_() {
-  CacheService.getScriptCache().remove('isSetupDone');
   const res = setupSupplySystem(true);
   SpreadsheetApp.getUi().alert(res.message);
 }
 
+/**
+ * เปลี่ยนค่านี้เมื่อเพิ่ม/เปลี่ยนคอลัมน์ในตาราง เพื่อให้ระบบปรับโครงสร้างตารางใหม่อัตโนมัติหนึ่งครั้ง
+ * (เดิมใช้แคช 6 ชั่วโมง ทำให้ทุก 6 ชั่วโมงจะมีผู้ใช้หนึ่งคนต้องรอการจัดรูปแบบตารางหลายวินาที)
+ */
+const SETUP_VERSION = '2026-09-23';
+
 function setupSupplySystem(force) {
-  const cache = CacheService.getScriptCache();
-  if (!force && cache.get('isSetupDone')) return { ok: true, message: 'ตรวจสอบตารางระบบเรียบร้อยแล้ว' };
+  const props = PropertiesService.getScriptProperties();
+  if (!force && props.getProperty('setupVersion') === SETUP_VERSION) {
+    return { ok: true, message: 'ตรวจสอบตารางระบบเรียบร้อยแล้ว' };
+  }
 
   const ss = getSS_();
   ensureUserSheetReadable_();
@@ -280,8 +302,10 @@ function setupSupplySystem(force) {
   seedDefaultSettings_();
   migrateLegacyRequests_();
   applyTextFormats_();
+  invalidateSettingsCache_();
 
-  cache.put('isSetupDone', '1', 21600);
+  props.setProperty('setupVersion', SETUP_VERSION);
+  mark_('setup');
   return { ok: true, message: 'ตรวจสอบ/ปรับโครงสร้างตารางระบบพัสดุเรียบร้อยแล้ว' };
 }
 
@@ -548,75 +572,124 @@ function splitLines_(value) {
  * ผู้ใช้และสิทธิ
  * ===================================================================*/
 
-const HEAVY_USER_COLUMNS = ['SignatureBase64', 'SignatureBase64_2', 'Avatar'];
-
 /**
- * อ่าน UserAccounts โดยข้ามคอลัมน์รูปภาพขนาดใหญ่ เพื่อให้โหลดเร็ว
+ * UserAccounts ใช้ร่วมกับระบบบุคลากรซึ่งมีคอลัมน์อื่นอีกมาก (รูป ลายเซ็น ที่อยู่ ฯลฯ)
+ * จึงอ่านเฉพาะคอลัมน์ที่ระบบนี้ใช้จริง และไม่นำรหัสผ่านเข้าแคช (ตรวจรหัสผ่านแยกใน findUserByCredentials_)
  */
-const USER_CACHE_KEY = 'supply_users_v1';
+const USER_COLUMNS = ['UserID', 'Username', 'FullName', 'Position', 'PositionLevel', 'Department',
+  'Role', 'CID', 'Email', 'PhoneNumber', 'Phone', 'IsActive'];
+const USER_CACHE_KEY = 'supply_users_v2';
+const USER_CACHE_SECONDS = 1800;
 
 function getAllUsers_() {
   if (cachedTableData_.__users) return cachedTableData_.__users;
-
-  const cache = CacheService.getScriptCache();
-  const cached = cache.get(USER_CACHE_KEY);
+  const cached = cacheGetLarge_(USER_CACHE_KEY);
   if (cached) {
     try {
       cachedTableData_.__users = JSON.parse(cached);
       return cachedTableData_.__users;
     } catch (err) {
-      cache.remove(USER_CACHE_KEY);
+      console.log('users cache broken: ' + err.message);
     }
   }
+  return loadUsersFromSheet_();
+}
 
+function loadUsersFromSheet_() {
+  const rows = readUserColumns_(USER_COLUMNS);
+  cachePutLarge_(USER_CACHE_KEY, JSON.stringify(rows), USER_CACHE_SECONDS);
+  cachedTableData_.__users = rows;
+  cachedTableData_.__usersFresh = true;
+  mark_('users-sheet');
+  return rows;
+}
+
+/** อ่านเฉพาะคอลัมน์ที่ระบุ รวมคอลัมน์ที่อยู่ติดกันเป็นช่วงเดียวเพื่อลดจำนวนครั้งที่เรียกชีต */
+function readUserColumns_(names) {
   const sh = getSS_().getSheetByName(CONFIG.USER_SHEET);
-  if (!sh || sh.getLastRow() < 2) { cachedTableData_.__users = []; return []; }
-
+  if (!sh || sh.getLastRow() < 2) return [];
   const headers = getHeaders_(sh);
-  const lastRow = sh.getLastRow();
-  const skip = {};
-  HEAVY_USER_COLUMNS.forEach(name => {
-    const i = headers.indexOf(name);
-    if (i > -1) skip[i] = true;
-  });
-
-  // อ่านเป็นช่วงคอลัมน์ที่ติดกัน ข้ามคอลัมน์หนัก
-  const blocks = [];
-  let start = -1;
-  for (let c = 0; c <= headers.length; c++) {
-    if (c < headers.length && !skip[c]) {
-      if (start === -1) start = c;
-    } else if (start > -1) {
-      blocks.push([start, c - 1]);
-      start = -1;
-    }
-  }
+  const count = sh.getLastRow() - 1;
+  const idx = names.map(n => headers.indexOf(n)).filter(i => i > -1).sort((a, b) => a - b);
 
   const rows = [];
-  for (let r = 0; r < lastRow - 1; r++) rows.push({ _rowNumber: r + 2 });
-  blocks.forEach(b => {
-    const width = b[1] - b[0] + 1;
-    const values = sh.getRange(2, b[0] + 1, lastRow - 1, width).getDisplayValues();
-    values.forEach((row, r) => {
-      for (let c = 0; c < width; c++) rows[r][headers[b[0] + c]] = text_(row[c]);
+  for (let r = 0; r < count; r++) rows.push({});
+  for (let i = 0; i < idx.length;) {
+    let j = i;
+    while (j + 1 < idx.length && idx[j + 1] === idx[j] + 1) j++;
+    const start = idx[i], width = idx[j] - idx[i] + 1;
+    sh.getRange(2, start + 1, count, width).getDisplayValues().forEach((row, r) => {
+      for (let c = 0; c < width; c++) rows[r][headers[start + c]] = text_(row[c]);
     });
-  });
-
-  try {
-    const text = JSON.stringify(rows);
-    if (text.length < 90000) cache.put(USER_CACHE_KEY, text, 300);
-  } catch (err) {
-    console.log('cache users: ' + err.message);
+    i = j + 1;
   }
-
-  cachedTableData_.__users = rows;
-  return rows;
+  return rows.filter(u => u.UserID);
 }
 
 function getUserById_(userId) {
   const id = text_(userId);
   if (!id) return null;
-  return getAllUsers_().find(u => text_(u.UserID) === id) || null;
+  let user = getAllUsers_().find(u => text_(u.UserID) === id);
+  // ผู้ใช้เพิ่งถูกเพิ่มในระบบบุคลากรหลังแคชถูกสร้าง — อ่านชีตใหม่หนึ่งครั้ง
+  if (!user && !cachedTableData_.__usersFresh) user = loadUsersFromSheet_().find(u => text_(u.UserID) === id);
+  return user || null;
+}
+
+/** ตรวจชื่อผู้ใช้/รหัสผ่านโดยอ่านแค่ 3 คอลัมน์ ไม่ต้องโหลดข้อมูลผู้ใช้ทั้งแผ่นงาน */
+function findUserByCredentials_(username, password) {
+  const sh = getSS_().getSheetByName(CONFIG.USER_SHEET);
+  if (!sh || sh.getLastRow() < 2) return null;
+  const headers = getHeaders_(sh);
+  const count = sh.getLastRow() - 1;
+  const column = name => {
+    const i = headers.indexOf(name);
+    return i < 0 ? [] : sh.getRange(2, i + 1, count, 1).getDisplayValues();
+  };
+  const ids = column('UserID'), names = column('Username'), passwords = column('Password');
+  for (let r = 0; r < count; r++) {
+    if (text_((names[r] || [])[0]) === username && text_((passwords[r] || [])[0]) === password) {
+      return getUserById_((ids[r] || [])[0]);
+    }
+  }
+  return null;
+}
+
+/* ---------- แคชขนาดใหญ่ (CacheService จำกัด 100KB ต่อค่า จึงแบ่งเก็บเป็นหลายชิ้น) ---------- */
+
+// นับเป็นตัวอักษร แต่ภาษาไทยใช้ 3 ไบต์ต่อตัวใน UTF-8 จึงตั้งไว้ 30,000 ตัวอักษร (~90KB)
+const CACHE_CHUNK_CHARS = 30000;
+
+function cachePutLarge_(key, text, seconds) {
+  try {
+    const n = Math.ceil(text.length / CACHE_CHUNK_CHARS) || 1;
+    if (n > 90) { console.log('cachePutLarge_ ' + key + ': too large (' + text.length + ' chars)'); return; }
+    const parts = {};
+    for (let i = 0; i < n; i++) parts[key + '_' + i] = text.slice(i * CACHE_CHUNK_CHARS, (i + 1) * CACHE_CHUNK_CHARS);
+    parts[key] = String(n);
+    CacheService.getScriptCache().putAll(parts, seconds);
+  } catch (err) {
+    console.log('cachePutLarge_ ' + key + ': ' + err.message);
+  }
+}
+
+function cacheGetLarge_(key) {
+  const cache = CacheService.getScriptCache();
+  const n = Number(cache.get(key));
+  if (!n) return null;
+  const keys = [];
+  for (let i = 0; i < n; i++) keys.push(key + '_' + i);
+  const parts = cache.getAll(keys);
+  let text = '';
+  for (let i = 0; i < n; i++) {
+    const part = parts[key + '_' + i];
+    if (part === undefined || part === null) return null; // บางชิ้นหมดอายุก่อน ถือว่าไม่มีแคช
+    text += part;
+  }
+  return text;
+}
+
+function cacheRemove_(key) {
+  CacheService.getScriptCache().remove(key);
 }
 
 function safeUser_(u, roleConfig) {
@@ -656,9 +729,35 @@ function isDeptHeadRole_(u) {
  * รายชื่อผู้มีสิทธิพิเศษ อ่านจากแผ่น setting (admin กำหนดเองในหน้า Setting)
  * ถ้ายังไม่เคยตั้งค่า จะ fallback ไปใช้ Role เดิมเพื่อไม่ให้ระบบล็อกตัวเอง
  */
+const ROLE_CACHE_KEY = 'supply_roles_v1';
+const SETTINGS_CACHE_KEY = 'supply_settings_v1';
+const SETTINGS_CACHE_SECONDS = 1800;
+
+/** ล้างแคชตั้งค่า/สิทธิ ต้องเรียกทุกครั้งที่เขียนแผ่นงาน setting */
+function invalidateSettingsCache_() {
+  delete cachedTableData_.__roleConfig;
+  delete cachedTableData_.__settings;
+  clearTableCache_(CONFIG.SETTING_SHEET);
+  cacheRemove_(ROLE_CACHE_KEY);
+  cacheRemove_(SETTINGS_CACHE_KEY);
+}
+
 function getRoleConfig_() {
   if (cachedTableData_.__roleConfig) return cachedTableData_.__roleConfig;
+  const cached = cacheGetLarge_(ROLE_CACHE_KEY);
+  if (cached) {
+    try {
+      cachedTableData_.__roleConfig = JSON.parse(cached);
+      return cachedTableData_.__roleConfig;
+    } catch (err) { /* อ่านใหม่จากชีต */ }
+  }
+  const cfg = buildRoleConfig_();
+  cachePutLarge_(ROLE_CACHE_KEY, JSON.stringify(cfg), SETTINGS_CACHE_SECONDS);
+  cachedTableData_.__roleConfig = cfg;
+  return cfg;
+}
 
+function buildRoleConfig_() {
   const rows = getTableRows_(CONFIG.SETTING_SHEET).filter(r => isTrue_(r.IsActive));
   const pick = cat => rows.filter(r => text_(r.Category) === cat).map(r => text_(r.Value)).filter(Boolean);
 
@@ -681,14 +780,12 @@ function getRoleConfig_() {
   const all = supplyIds.concat(supplyHeadIds).concat(superAdminIds)
     .filter((v, i, a) => v && a.indexOf(v) === i);
 
-  const cfg = {
+  return {
     supplyIds: all,
     supplyOfficerIds: supplyIds,
     supplyHeadIds: supplyHeadIds,
     superAdminIds: superAdminIds
   };
-  cachedTableData_.__roleConfig = cfg;
-  return cfg;
 }
 
 function isSupply_(user) {
@@ -732,12 +829,14 @@ function apiLogin_(p) {
   const password = text_(p.password);
   if (!username || !password) throw new Error('กรุณากรอกชื่อผู้ใช้และรหัสผ่าน');
 
-  const user = getAllUsers_().find(u => text_(u.Username) === username && text_(u.Password) === password);
+  const user = findUserByCredentials_(username, password);
+  mark_('credentials');
   if (!user) throw new Error('ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง');
   if (!isTrue_(user.IsActive)) throw new Error('บัญชีนี้ถูกปิดใช้งาน กรุณาติดต่อผู้ดูแลระบบ');
 
   const token = createSession_(user, text_(p.client));
   addLog_(user, 'LOGIN', '', 'เข้าสู่ระบบ');
+  mark_('session+log');
 
   return Object.assign({
     ok: true,
@@ -775,7 +874,12 @@ function createSession_(user, client) {
   });
   clearTableCache_(CONFIG.SESSION_SHEET);
   cacheSession_(token, text_(user.UserID), expires);
-  purgeExpiredSessions_(sh);
+  // ลบเซสชันหมดอายุ (ลบทีละแถวซึ่งช้า) ไม่เกินชั่วโมงละครั้ง แทนที่จะทำทุกครั้งที่มีคนเข้าสู่ระบบ
+  const cache = CacheService.getScriptCache();
+  if (!cache.get('sessPurged')) {
+    purgeExpiredSessions_(sh);
+    cache.put('sessPurged', '1', 3600);
+  }
   return token;
 }
 
@@ -830,9 +934,41 @@ function requireAuth_(token) {
   }
 
   const user = getUserById_(userId);
+  mark_('auth');
   if (!user) throw new Error('ไม่พบบัญชีผู้ใช้ กรุณาเข้าสู่ระบบใหม่');
   if (!isTrue_(user.IsActive)) throw new Error('บัญชีนี้ถูกปิดใช้งาน');
   return user;
+}
+
+/* =====================================================================
+ * อุ่นระบบ — ให้แคชรายชื่อผู้ใช้/ตั้งค่าพร้อมก่อนมีคนกดเข้าสู่ระบบ
+ * ===================================================================*/
+
+/** หน้าเว็บเรียกตอนเปิดหน้าเข้าสู่ระบบ ระหว่างที่ผู้ใช้กำลังพิมพ์รหัสผ่าน (ไม่คืนข้อมูลใดๆ) */
+function apiWarmup_(p) {
+  getAllUsers_();
+  getRoleConfig_();
+  buildSettings_();
+  return { ok: true };
+}
+
+/** ตัวจับเวลาเรียกทุก 10 นาที: สร้างแคชใหม่ก่อนหมดอายุ ผู้ใช้จึงแทบไม่ต้องรออ่านแผ่นงานเลย */
+function warmUpCaches() {
+  cachedTableData_ = {};
+  loadUsersFromSheet_();
+  invalidateSettingsCache_();
+  getRoleConfig_();
+  buildSettings_();
+}
+
+/** รันฟังก์ชันนี้หนึ่งครั้งจากหน้า Apps Script เพื่อตั้งตัวจับเวลาอุ่นระบบ */
+function installWarmupTrigger() {
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'warmUpCaches')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  ScriptApp.newTrigger('warmUpCaches').timeBased().everyMinutes(10).create();
+  warmUpCaches();
+  return 'ตั้งเวลาอุ่นระบบทุก 10 นาทีเรียบร้อยแล้ว';
 }
 
 /* =====================================================================
@@ -853,14 +989,19 @@ function buildBootstrapData_(user, filters) {
     .map(u => safeUser_(u, cfg))
     .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
 
+  mark_('users');
   const settings = buildSettings_();
+  mark_('settings');
   const requests = listRequestRows_(user, filters || {});
+  mark_('requests');
+  const dashboard = buildDashboard_(requests, {});
+  mark_('dashboard');
   return {
     user: safeUser_(user, cfg),
     users: users,
     settings: settings,
     requests: requests.map(summarizeRequest_),
-    dashboard: buildDashboard_(requests, {}),
+    dashboard: dashboard,
     meta: {
       statuses: Object.keys(STATUS).map(k => STATUS[k]),
       stages: settings.stages,
@@ -1770,6 +1911,21 @@ function apiGetSettings_(p) {
 }
 
 function buildSettings_() {
+  if (cachedTableData_.__settings) return cachedTableData_.__settings;
+  const cached = cacheGetLarge_(SETTINGS_CACHE_KEY);
+  if (cached) {
+    try {
+      cachedTableData_.__settings = JSON.parse(cached);
+      return cachedTableData_.__settings;
+    } catch (err) { /* อ่านใหม่จากชีต */ }
+  }
+  const settings = buildSettingsFromSheet_();
+  cachePutLarge_(SETTINGS_CACHE_KEY, JSON.stringify(settings), SETTINGS_CACHE_SECONDS);
+  cachedTableData_.__settings = settings;
+  return settings;
+}
+
+function buildSettingsFromSheet_() {
   const rows = getTableRows_(CONFIG.SETTING_SHEET)
     .filter(r => isTrue_(r.IsActive))
     .sort((a, b) => num_(a.SortOrder) - num_(b.SortOrder));
@@ -1842,8 +1998,7 @@ function apiSaveSetting_(p) {
   if (existing) writeObjectRow_(sh, headers, record, existing._rowNumber);
   else appendObjectRow_(sh, headers, record);
 
-  clearTableCache_(CONFIG.SETTING_SHEET);
-  delete cachedTableData_.__roleConfig;
+  invalidateSettingsCache_();
   addLog_(user, 'SAVE_SETTING', '', category + ': ' + record.Label);
   return { ok: true, message: 'บันทึกตัวเลือกเรียบร้อยแล้ว', settings: buildSettings_() };
 }
@@ -1852,7 +2007,7 @@ function apiDeleteSetting_(p) {
   const user = requireAuth_(p.token);
   requireSuperAdmin_(user);
   deleteRowsByValue_(CONFIG.SETTING_SHEET, 'SettingID', p.settingId);
-  delete cachedTableData_.__roleConfig;
+  invalidateSettingsCache_();
   addLog_(user, 'DELETE_SETTING', '', text_(p.settingId));
   return { ok: true, message: 'ลบตัวเลือกเรียบร้อยแล้ว', settings: buildSettings_() };
 }
@@ -1895,8 +2050,7 @@ function apiSetRoleMembers_(p) {
   });
   appendObjectRows_(sh, headers, records);
 
-  clearTableCache_(CONFIG.SETTING_SHEET);
-  delete cachedTableData_.__roleConfig;
+  invalidateSettingsCache_();
   addLog_(user, 'SET_ROLE_MEMBERS', '', category + ' = ' + userIds.length + ' คน');
   return { ok: true, message: 'บันทึกรายชื่อผู้มีสิทธิเรียบร้อยแล้ว', settings: buildSettings_() };
 }

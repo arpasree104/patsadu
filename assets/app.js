@@ -156,6 +156,7 @@
     var body = Object.assign({ action: action }, payload || {});
     if (STATE.token && !options.anonymous) body.token = STATE.token;
     if (options.message !== false) busy(options.message || 'กำลังติดต่อเซิร์ฟเวอร์...');
+    var startedAt = Date.now();
 
     return fetch(STATE.endpoint, {
       method: 'POST',
@@ -173,6 +174,7 @@
           throw new Error('เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง (HTTP ' + raw.status + ') — ตรวจสอบว่า Deploy Web App โดยตั้ง "ผู้ที่มีสิทธิ์เข้าถึง" เป็น "ทุกคน" แล้ว');
         }
         if (!json.ok) throw new Error(json.error || 'เกิดข้อผิดพลาดที่เซิร์ฟเวอร์');
+        json.clientMs = Date.now() - startedAt; // เวลารวมทั้งเครือข่าย + เซิร์ฟเวอร์ (json.serverMs = เฉพาะเซิร์ฟเวอร์)
         if (options.message !== false) idle(options.done || '');
         return json;
       })
@@ -250,7 +252,23 @@
 
   function showLogin() {
     show('loginView');
+    warmUpServer();
     setTimeout(function () { var el = $('loginUsername'); if (el) el.focus(); }, 60);
+  }
+
+  /**
+   * ปลุกเซิร์ฟเวอร์ Apps Script และเตรียมแคชรายชื่อผู้ใช้ไว้ระหว่างที่ผู้ใช้กำลังพิมพ์รหัสผ่าน
+   * ใช้ fetch ตรงแทน api() เพื่อไม่ให้ขึ้นข้อความผิดพลาดบนหน้าจอ ถ้าเซิร์ฟเวอร์ยังเป็นเวอร์ชันเก่า
+   */
+  var warmedUp = false;
+  function warmUpServer() {
+    if (warmedUp || !STATE.endpoint) return;
+    warmedUp = true;
+    fetch(STATE.endpoint, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify({ action: 'warmup' })
+    }).catch(function () { warmedUp = false; });
   }
 
   function saveEndpoint() {
@@ -276,6 +294,8 @@
     $('loginBtn').disabled = true;
     show('appView');
     skeleton($('kpiGrid'), 4);
+    $('currentUserName').textContent = username;
+    $('currentUserMeta').textContent = 'กำลังเข้าสู่ระบบและโหลดข้อมูล...';
     // รวมการเข้าสู่ระบบกับการโหลดข้อมูลตั้งต้นไว้ในคำสั่งเดียว (ดู action "login" ใน code.gs)
     // แทนที่จะเรียก login แล้วต่อด้วย bootstrap อีกครั้ง — ลดรอบการติดต่อเซิร์ฟเวอร์ลงครึ่งหนึ่ง เปิดระบบได้เร็วขึ้น
     api('login', { username: username, password: password, client: navigator.userAgent, filters: currentFilters() },
@@ -343,7 +363,11 @@
     renderList();
     renderSettings();
     fillTrackSelect();
-    $('lastSync').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH');
+    // แสดงเวลาที่ใช้จริง แยกเวลาเซิร์ฟเวอร์ออกจากเวลาเครือข่าย ใช้ดูว่าช้าที่ส่วนไหน
+    var took = res.clientMs ? ' · ใช้เวลา ' + (res.clientMs / 1000).toFixed(1) + ' วิ' +
+      (res.serverMs ? ' (เซิร์ฟเวอร์ ' + (res.serverMs / 1000).toFixed(1) + ' วิ)' : '') : '';
+    $('lastSync').textContent = 'อัปเดตล่าสุด ' + new Date().toLocaleTimeString('th-TH') + took;
+    if (res.perf && res.perf.length) $('lastSync').title = res.perf.join('\n');
   }
 
   function viewPublicDashboard() {
