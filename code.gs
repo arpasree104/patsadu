@@ -64,6 +64,9 @@ const PROCUREMENT_STAGES = [
 const FINAL_STAGE = 'รายงานผลการตรวจรับ';
 
 const BUDGET_TYPES = ['ในงบประมาณ', 'นอกงบประมาณ'];
+const PURCHASE_TYPES = ['ซื้อ', 'จ้าง', 'ซื้อ/จ้าง'];
+const OFFICER_METHODS = ['เฉพาะเจาะจง', 'คัดเลือก', 'ตลาดอิเล็กทรอนิกส์ (e-market)', 'ประกวดราคาอิเล็กทรอนิกส์ (e-bidding)'];
+const IN_PROGRESS_METHODS = ['e-market', 'e-bidding'];
 
 /** หมวดใน setting ที่ใช้กำหนดสิทธิ */
 const ROLE_CATEGORIES = {
@@ -216,6 +219,7 @@ const ACTIONS = {
   listRequests: function (p) { return apiListRequests_(p); },
   getRequest: function (p) { return apiGetRequest_(p); },
   saveRequest: function (p) { return apiSaveRequest_(p); },
+  saveOfficerOpinion: function (p) { return apiSaveOfficerOpinion_(p); },
   submitRequest: function (p) { return apiSubmitRequest_(p); },
   reviewRequest: function (p) { return apiReviewRequest_(p); },
   cancelRequest: function (p) { return apiCancelRequest_(p); },
@@ -717,6 +721,11 @@ function canSeeDepartment_(user) {
  * Session / Token
  * ===================================================================*/
 
+/**
+ * เข้าสู่ระบบและโหลดข้อมูลตั้งต้นทั้งหมดในคำสั่งเดียว (รวม apiBootstrap_ ไว้ในนี้)
+ * เพื่อลดจำนวนรอบการเรียก API ตอนเข้าสู่ระบบจาก 2 ครั้งเหลือ 1 ครั้ง — ช่วยให้เปิดระบบได้เร็วขึ้น
+ * เพราะ Apps Script Web App แต่ละคำสั่งมีเวลาเริ่มต้นสคริปต์ค่อนข้างนาน
+ */
 function apiLogin_(p) {
   setupSupplySystem();
   const username = text_(p.username);
@@ -729,12 +738,12 @@ function apiLogin_(p) {
 
   const token = createSession_(user, text_(p.client));
   addLog_(user, 'LOGIN', '', 'เข้าสู่ระบบ');
-  return {
+
+  return Object.assign({
     ok: true,
     token: token,
-    expiresIn: CONFIG.SESSION_HOURS * 3600,
-    user: safeUser_(user)
-  };
+    expiresIn: CONFIG.SESSION_HOURS * 3600
+  }, buildBootstrapData_(user, p.filters || {}));
 }
 
 function apiLogout_(p) {
@@ -833,25 +842,30 @@ function requireAuth_(token) {
 function apiBootstrap_(p) {
   const user = requireAuth_(p.token);
   setupSupplySystem();
+  return Object.assign({ ok: true }, buildBootstrapData_(user, p.filters || {}));
+}
+
+/** ข้อมูลตั้งต้นทั้งหมดหลังเข้าสู่ระบบ ใช้ร่วมกันทั้ง action login และ bootstrap */
+function buildBootstrapData_(user, filters) {
   const cfg = getRoleConfig_();
   const users = getAllUsers_()
     .filter(u => isTrue_(u.IsActive))
     .map(u => safeUser_(u, cfg))
     .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
 
-  const requests = listRequestRows_(user, p.filters || {});
+  const settings = buildSettings_();
+  const requests = listRequestRows_(user, filters || {});
   return {
-    ok: true,
     user: safeUser_(user, cfg),
     users: users,
-    settings: buildSettings_(),
+    settings: settings,
     requests: requests.map(summarizeRequest_),
     dashboard: buildDashboard_(requests, {}),
     meta: {
       statuses: Object.keys(STATUS).map(k => STATUS[k]),
-      stages: getProcurementStages_(),
+      stages: settings.stages,
       attachmentTypes: ATTACHMENT_TYPES,
-      budgetTypes: BUDGET_TYPES,
+      budgetTypes: settings.budgetTypes,
       serverTime: nowText_()
     }
   };
@@ -1012,9 +1026,13 @@ function requestPermissions_(user, request) {
   const latest = bool01_(request.IsLatest) === 1;
 
   return {
-    canEdit: latest && !locked && (isOwner || supply) &&
+    // ส่วนที่ 1-4 และ 6 (ข้อมูลของผู้ยื่นคำขอ) แก้ไขได้เฉพาะเจ้าของคำขอ ขณะสถานะร่าง/ส่งกลับแก้ไข
+    canEdit: latest && !locked && isOwner &&
       (status === STATUS.DRAFT || status === STATUS.RETURNED),
     canSubmit: latest && !locked && isOwner && (status === STATUS.DRAFT || status === STATUS.RETURNED),
+    // ส่วนที่ 5 (ความเห็นเจ้าหน้าที่ / งานแผน) แก้ไขได้เฉพาะเจ้าหน้าที่พัสดุ ไม่ว่าคำขออยู่สถานะใด (ตราบใดที่ยังไม่ล็อก)
+    canEditOfficerSection: latest && !locked && supply &&
+      status !== STATUS.CANCELLED && status !== STATUS.SUPERSEDED,
     canReview: latest && supply && status === STATUS.SUBMITTED,
     canDownload: status !== STATUS.CANCELLED,
     isOfficialCopy: status === STATUS.CHECKED || status === STATUS.APPROVED ||
@@ -1079,8 +1097,10 @@ function saveRequestInternal_(user, payload, items, alsoSubmit) {
     if (bool01_(existing.IsLocked) === 1) {
       throw new Error('คำขอนี้ถูกล็อกหลังได้รับอนุมัติแล้ว ต้องให้เจ้าหน้าที่พัสดุปลดล็อกก่อนจึงจะแก้ไขได้');
     }
-    if (text_(existing.CreatedByUserID) !== text_(user.UserID) && !isSupply_(user)) {
-      throw new Error('คุณไม่มีสิทธิแก้ไขคำขอนี้');
+    // ส่วนที่ 1-4, 6 เป็นของผู้ยื่นคำขอเท่านั้น — เจ้าหน้าที่พัสดุแก้ไขส่วนนี้ไม่ได้แม้เป็นเจ้าหน้าที่พัสดุ
+    // (เจ้าหน้าที่พัสดุแก้ไขได้เฉพาะส่วนที่ 5 ผ่าน action saveOfficerOpinion เท่านั้น)
+    if (text_(existing.CreatedByUserID) !== text_(user.UserID)) {
+      throw new Error('คุณไม่มีสิทธิแก้ไขคำขอนี้ ส่วนนี้แก้ไขได้เฉพาะผู้ยื่นคำขอ');
     }
     if (status === STATUS.RETURNED) mode = 'newVersion';
     else if (status === STATUS.DRAFT) mode = 'update';
@@ -1280,6 +1300,56 @@ function updateRequestRow_(requestId, fields) {
   });
   range.setValues([values]);
   clearTableCache_(CONFIG.REQUEST_SHEET);
+}
+
+/**
+ * บันทึกเฉพาะส่วนที่ 5) ความเห็นเจ้าหน้าที่ / งานแผน
+ * ให้เจ้าหน้าที่พัสดุแก้ไขได้โดยไม่ต้องรอสถานะร่าง/ส่งกลับแก้ไข และไม่กระทบส่วนอื่นของคำขอ
+ * (ส่วนที่ 1-4, 6 ยังคงแก้ไขได้เฉพาะเจ้าของคำขอผ่าน apiSaveRequest_ เท่านั้น)
+ */
+function apiSaveOfficerOpinion_(p) {
+  const user = requireAuth_(p.token);
+  requireSupply_(user);
+  const requestId = text_(p.requestId);
+  const request = findRequest_(requestId);
+
+  if (bool01_(request.IsLatest) !== 1) throw new Error('คำขอนี้ไม่ใช่เวอร์ชันล่าสุด แก้ไขไม่ได้');
+  if (bool01_(request.IsLocked) === 1) throw new Error('คำขอนี้ถูกล็อกหลังได้รับอนุมัติแล้ว ต้องปลดล็อกก่อนจึงจะแก้ไขได้');
+  const status = normalizeStatus_(request.Status);
+  if (status === STATUS.CANCELLED) throw new Error('คำขอนี้ถูกยกเลิกแล้ว');
+  if (status === STATUS.SUPERSEDED) throw new Error('คำขอนี้ถูกแก้ไขเป็นเวอร์ชันใหม่แล้ว');
+
+  const payload = p.payload || {};
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    updateRequestRow_(requestId, {
+      OfficerOpinionAnnualUnder100k: bool01_(payload.officerOpinionAnnualUnder100k),
+      OfficerOpinionAnnualOver100k: bool01_(payload.officerOpinionAnnualOver100k),
+      OfficerMethod: text_(payload.officerMethod) || 'เฉพาะเจาะจง',
+      OfficerMethodInProgress: bool01_(payload.officerMethodInProgress),
+      OfficerInProgressMethod: text_(payload.officerInProgressMethod),
+      CompletionDays: num_(payload.completionDays),
+      OfficerReason: text_(payload.officerReason) || 'เนื่องจากมีความจำเป็นต้องใช้ในงานราชการของ สสจ.นครนายก',
+      OfficerName: text_(payload.officerName),
+      OfficerPosition: text_(payload.officerPosition),
+      DeptHeadName: text_(payload.deptHeadName),
+      DeptHeadPosition: text_(payload.deptHeadPosition),
+      BudgetType: text_(payload.budgetType) || budgetTypeFromSource_(payload.planBudgetSource),
+      PlanInPlan: bool01_(payload.planInPlan),
+      PlanYear: text_(payload.planYear),
+      PlanOther: text_(payload.planOther),
+      PlanBudgetSource: text_(payload.planBudgetSource),
+      PlanAmount: num_(payload.planAmount) || num_(request.TotalAmount),
+      PlanRemark: text_(payload.planRemark),
+      UpdatedAt: new Date()
+    });
+  } finally {
+    lock.releaseLock();
+  }
+
+  addLog_(user, 'UPDATE_OFFICER_OPINION', requestId, request.RequestNo);
+  return { ok: true, message: 'บันทึกความเห็นเจ้าหน้าที่/งานแผนเรียบร้อยแล้ว' };
 }
 
 /* ---------------------- ส่ง / ตรวจสอบ / ยกเลิก ---------------------- */
@@ -1598,12 +1668,20 @@ function readProgress_(requestId, viewer) {
 }
 
 function getProcurementStages_() {
+  return getOptionList_('ProcurementStage', PROCUREMENT_STAGES);
+}
+
+/**
+ * อ่านตัวเลือกของหมวดใดหมวดหนึ่งจากแผ่นงาน setting (กำหนดเองได้จากหน้า ตั้งค่าระบบ → ตัวเลือกในระบบ)
+ * ถ้า admin ยังไม่เคยกำหนดตัวเลือกของหมวดนั้น จะใช้ค่าตั้งต้นของระบบแทน
+ */
+function getOptionList_(category, fallbackArr) {
   const custom = getTableRows_(CONFIG.SETTING_SHEET)
-    .filter(r => isTrue_(r.IsActive) && text_(r.Category) === 'ProcurementStage')
+    .filter(r => isTrue_(r.IsActive) && text_(r.Category) === category)
     .sort((a, b) => num_(a.SortOrder) - num_(b.SortOrder))
     .map(r => text_(r.Value) || text_(r.Label))
     .filter(Boolean);
-  return custom.length ? custom : PROCUREMENT_STAGES.slice();
+  return custom.length ? custom : fallbackArr.slice();
 }
 
 /* =====================================================================
@@ -1719,7 +1797,10 @@ function buildSettings_() {
     itemNames: byCategory('ItemName'),
     units: byCategory('Unit'),
     budgetSources: byCategory('BudgetSource'),
-    budgetTypes: BUDGET_TYPES,
+    budgetTypes: getOptionList_('BudgetType', BUDGET_TYPES),
+    purchaseTypes: getOptionList_('PurchaseType', PURCHASE_TYPES),
+    officerMethods: getOptionList_('OfficerMethod', OFFICER_METHODS),
+    inProgressMethods: getOptionList_('InProgressMethod', IN_PROGRESS_METHODS),
     budgetSourceTypes: rows
       .filter(r => text_(r.Category) === 'BudgetSourceType')
       .map(r => ({ source: text_(r.Label), budgetType: text_(r.Value) })),

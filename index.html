@@ -191,7 +191,7 @@
           </div>
           <div class="grid grid-2">
             <div class="field"><label>เรียน</label><input id="to" type="text"></div>
-            <div class="field"><label>ประเภท</label><select id="purchaseType"><option value="ซื้อ">ซื้อ</option><option value="จ้าง">จ้าง</option><option value="ซื้อ/จ้าง">ซื้อ/จ้าง</option></select></div>
+            <div class="field"><label>ประเภท</label><select id="purchaseType"></select></div>
           </div>
           <div class="field"><label class="req">เรื่อง / ขอความเห็นชอบซื้อหรือจ้าง</label><input id="subject" type="text" placeholder="เช่น วัสดุสำนักงาน / จ้างเหมาบริการ..."></div>
           <div class="field"><label class="req">เหตุผลและความจำเป็น</label><textarea id="reason"></textarea></div>
@@ -229,17 +229,18 @@
           </div>
         </div>
 
-        <div class="card">
+        <div class="card" id="officerSection">
           <div class="section-title">5) ความเห็นเจ้าหน้าที่ / งานแผน</div>
+          <div class="alert alert-info small" id="officerSectionHint">ส่วนนี้แก้ไขได้เฉพาะเจ้าหน้าที่พัสดุที่ผู้ดูแลระบบกำหนดไว้ ไม่ว่าคำขออยู่สถานะใด</div>
           <datalist id="budgetSourceList"></datalist>
           <div class="grid grid-2">
             <div>
               <label class="checkline"><input id="officerOpinionAnnualUnder100k" type="checkbox"> วัสดุสิ้นเปลืองมูลค่าจัดซื้อทั้งปี ไม่เกิน 1 แสนบาท</label>
               <label class="checkline"><input id="officerOpinionAnnualOver100k" type="checkbox"> วัสดุสิ้นเปลืองมูลค่าจัดซื้อทั้งปี เกิน 1 แสนบาท</label>
-              <div class="field"><label>เห็นควรจัดซื้อ/จ้างโดยวิธี</label><select id="officerMethod"><option>เฉพาะเจาะจง</option><option>คัดเลือก</option><option>ตลาดอิเล็กทรอนิกส์ (e-market)</option><option>ประกวดราคาอิเล็กทรอนิกส์ (e-bidding)</option></select></div>
+              <div class="field"><label>เห็นควรจัดซื้อ/จ้างโดยวิธี</label><select id="officerMethod"></select></div>
               <label class="checkline"><input id="officerMethodInProgress" type="checkbox"> เฉพาะเจาะจงก่อน เนื่องจากอยู่ระหว่างดำเนินการ</label>
               <div class="grid grid-2">
-                <div class="field"><label>วิธีที่อยู่ระหว่างดำเนินการ</label><select id="officerInProgressMethod"><option value=""></option><option>e-market</option><option>e-bidding</option></select></div>
+                <div class="field"><label>วิธีที่อยู่ระหว่างดำเนินการ</label><select id="officerInProgressMethod"></select></div>
                 <div class="field"><label>กำหนดแล้วเสร็จ (วัน)</label><input id="completionDays" type="number" min="0" value="0"></div>
               </div>
               <div class="field"><label>เหตุผลประกอบความเห็น</label><textarea id="officerReason"></textarea></div>
@@ -277,6 +278,7 @@
           <div class="row-actions">
             <button id="btnSaveDraft" class="btn btn-primary" onclick="App.saveRequest(false)">💾 บันทึกร่าง</button>
             <button id="btnSaveSubmit" class="btn btn-warn" onclick="App.saveRequest(true)">📨 บันทึกและส่งให้พัสดุตรวจสอบ</button>
+            <button id="btnSaveOfficerOpinion" class="btn btn-primary hidden" onclick="App.saveOfficerOpinion()">💾 บันทึกความเห็นเจ้าหน้าที่/งานแผน</button>
             <button id="btnReviewPass" class="btn btn-ok hidden" onclick="App.review('pass')">✅ ผ่านการตรวจสอบ</button>
             <button id="btnReviewReturn" class="btn btn-danger hidden" onclick="App.review('return')">↩️ ส่งกลับแก้ไข</button>
             <button id="btnAttachApproval" class="btn btn-primary hidden" onclick="App.openApprovalModal()">📎 แนบเอกสารอนุมัติและล็อก</button>
@@ -327,6 +329,10 @@
               <option value="Unit">Unit — หน่วยนับ</option>
               <option value="BudgetSource">BudgetSource — แหล่งเงิน</option>
               <option value="BudgetSourceType">BudgetSourceType — แหล่งเงิน→ใน/นอกงบ</option>
+              <option value="BudgetType">BudgetType — ประเภทงบประมาณ</option>
+              <option value="PurchaseType">PurchaseType — ประเภทซื้อ/จ้าง</option>
+              <option value="OfficerMethod">OfficerMethod — วิธีจัดซื้อ/จ้างที่เจ้าหน้าที่เห็นควร</option>
+              <option value="InProgressMethod">InProgressMethod — วิธีที่อยู่ระหว่างดำเนินการ</option>
               <option value="ProcurementStage">ProcurementStage — ขั้นตอนพัสดุ</option>
               <option value="Default">Default — ค่าตั้งต้นระบบ</option>
             </select></div>
