@@ -60,8 +60,10 @@
   function num(v) { var n = Number(String(v === null || v === undefined ? '' : v).replace(/,/g, '')); return isNaN(n) ? 0 : n; }
   function money(v) { return num(v).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function count(v) { return num(v).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
-  // ใช้ในเอกสารที่พิมพ์ จึง escape ก่อนแปลงเป็นเลขไทยเสมอ
+  // ใช้ในเอกสารที่พิมพ์บนหน้าจอ (HTML) จึง escape ก่อนแปลงเป็นเลขไทยเสมอ
   function thNum(s) { return esc(s).replace(/[0-9]/g, function (d) { return '๐๑๒๓๔๕๖๗๘๙'[d]; }); }
+  // ใช้กับไฟล์ PDF (pdfmake ไม่ใช่ HTML) จึงไม่ escape
+  function thNumPlain(s) { return String(s === null || s === undefined ? '' : s).replace(/[0-9]/g, function (d) { return '๐๑๒๓๔๕๖๗๘๙'[d]; }); }
 
   function toISODate(v) {
     if (!v) return '';
@@ -1339,6 +1341,8 @@
     STATE.printKind = 'request';
     $('printTitle').textContent = 'แบบขอความเห็นชอบซื้อ/จ้าง';
     $('printArea').innerHTML = renderMemo(STATE.detail);
+    $('btnDownloadPdf').classList.remove('hidden');
+    $('btnRawPrint').classList.add('hidden');
     $('printModal').classList.remove('hidden');
   }
 
@@ -1346,6 +1350,9 @@
     STATE.printKind = 'dashboard';
     $('printTitle').textContent = 'รายงานสรุปเสนอผู้บริหาร';
     $('printArea').innerHTML = renderExecutiveReport();
+    // รายงานแดชบอร์ดยังไม่มีตัวสร้าง PDF จริง จึงใช้การพิมพ์ของเบราว์เซอร์แทน
+    $('btnDownloadPdf').classList.add('hidden');
+    $('btnRawPrint').classList.remove('hidden');
     $('printModal').classList.remove('hidden');
   }
 
@@ -1404,7 +1411,7 @@
       '<div class="frow"><span class="bold">ส่วนราชการ</span><span class="fill">' + esc(r.Department) +
       '</span><span class="bold">โทร.</span><span class="fill w-md">' + thNum(r.Phone || '') + '</span></div>' +
       '<div class="frow"><span class="bold">ที่</span><span>นย</span><span class="fill">' +
-      thNum(r.DocNoText || '') + '</span><span class="bold">วันที่</span><span class="fill w-md">' +
+      thNum(String(r.DocNoText || '').trim().replace(/^นย\s*/, '')) + '</span><span class="bold">วันที่</span><span class="fill w-md">' +
       thNum(thaiDate(r.RequestDate)) + '</span></div>' +
       '<div class="frow"><span class="bold">เรื่อง</span><span>ขอความเห็นชอบซื้อ/จ้าง</span>' +
       '<span class="fill">' + esc(r.Subject) + '</span></div>' +
@@ -1588,7 +1595,8 @@
       '<td class="lbl" width="115">ส่วนราชการ</td><td class="u">' + esc(r.Department) + '</td>' +
       '<td class="lbl" width="55">โทร.</td><td class="u" width="150">' + thNum(r.Phone || '') + '</td></tr></table>' +
       '<table class="t"><tr>' +
-      '<td class="lbl" width="30">ที่</td><td width="30">นย</td><td class="u">' + thNum(r.DocNoText || '') + '</td>' +
+      '<td class="lbl" width="30">ที่</td><td width="30">นย</td><td class="u">' +
+      thNum(String(r.DocNoText || '').trim().replace(/^นย\s*/, '')) + '</td>' +
       '<td class="lbl" width="60">วันที่</td><td class="u" width="190">' + thNum(thaiDate(r.RequestDate)) + '</td></tr></table>' +
       '<table class="t"><tr>' +
       '<td class="lbl" width="52">เรื่อง</td><td width="185">ขอความเห็นชอบซื้อ/จ้าง</td>' +
@@ -1758,6 +1766,75 @@
     return 'คำขอพัสดุ_' + (r.RequestNo || todayISO());
   }
 
+  /* ==================== ไฟล์ PDF จริง (pdfmake) ==================== */
+
+  var PDF_LIBS_READY = null;
+
+  /** ดึงไฟล์จาก URL แล้วแปลงเป็น base64 ล้วน (ไม่มี prefix data:) — คืนค่า null ถ้าดึงไม่สำเร็จ */
+  function fetchBase64(url) {
+    return fetch(url).then(function (res) {
+      if (!res.ok) throw new Error('โหลดไฟล์ไม่สำเร็จ: ' + url);
+      return res.blob();
+    }).then(function (blob) {
+      return new Promise(function (resolve, reject) {
+        var fr = new FileReader();
+        fr.onload = function () { resolve(String(fr.result).split(',')[1] || ''); };
+        fr.onerror = function () { reject(new Error('อ่านไฟล์ไม่สำเร็จ: ' + url)); };
+        fr.readAsDataURL(blob);
+      });
+    });
+  }
+
+  /** โหลด pdfmake + ฟอนต์ Sarabun ครั้งเดียว แล้วใช้ซ้ำได้ตลอดอายุหน้าเว็บ */
+  function ensurePdfLibs() {
+    if (PDF_LIBS_READY) return PDF_LIBS_READY;
+    PDF_LIBS_READY = Promise.all([
+      loadScript('https://cdn.jsdelivr.net/npm/pdfmake@0.2.12/build/pdfmake.min.js'),
+      loadScript('assets/pdf-memo.js'),
+      fetchBase64('assets/fonts/Sarabun-Regular.ttf'),
+      fetchBase64('assets/fonts/Sarabun-Bold.ttf')
+    ]).then(function (results) {
+      var regular = results[2], bold = results[3];
+      window.pdfMake.vfs = window.pdfMake.vfs || {};
+      window.pdfMake.vfs['Sarabun-Regular.ttf'] = regular;
+      window.pdfMake.vfs['Sarabun-Bold.ttf'] = bold;
+      window.pdfMake.fonts = window.pdfMake.fonts || {};
+      window.pdfMake.fonts.Sarabun = {
+        normal: 'Sarabun-Regular.ttf', bold: 'Sarabun-Bold.ttf',
+        italics: 'Sarabun-Regular.ttf', bolditalics: 'Sarabun-Bold.ttf'
+      };
+    }).catch(function (err) {
+      PDF_LIBS_READY = null; // ให้ลองใหม่ได้ในครั้งถัดไปถ้าเน็ตขัดข้องชั่วคราว
+      throw err;
+    });
+    return PDF_LIBS_READY;
+  }
+
+  /** สร้างไฟล์ PDF จริงด้วย pdfmake (ไม่ใช่การพิมพ์จากหน้าจอ) จึงไม่มีปัญหาเลื่อนหน้าจอหรือตัดขอบ */
+  function downloadPdf() {
+    if (STATE.printKind !== 'request' || !STATE.detail) {
+      // รายงานแดชบอร์ดยังใช้การพิมพ์ของเบราว์เซอร์ตามเดิม
+      window.print();
+      return;
+    }
+    busy('กำลังเตรียมฟอนต์และสร้างไฟล์ PDF...');
+    ensurePdfLibs()
+      .then(function () {
+        return fetchBase64(CFG.GARUDA_URL)
+          .then(function (b64) { return 'data:image/png;base64,' + b64; })
+          .catch(function () { return null; }); // ไม่มีตราครุฑก็ยังสร้าง PDF ต่อได้
+      })
+      .then(function (garudaDataUrl) {
+        var fmt = { thNum: thNumPlain, money: money, count: count, thaiDate: thaiDate };
+        var dd = window.PatsaduPdf.buildMemoDoc(STATE.detail, fmt, garudaDataUrl);
+        window.pdfMake.createPdf(dd).download(printFileName() + '.pdf');
+        idle('ดาวน์โหลดไฟล์ PDF เรียบร้อย');
+      })
+      .catch(function (err) {
+        idle(err.message || 'สร้างไฟล์ PDF ไม่สำเร็จ', true);
+      });
+  }
+
   function closeModal(id) { $(id).classList.add('hidden'); }
 
   /* ==================== ผูก API สาธารณะ ==================== */
@@ -1777,7 +1854,7 @@
     saveRoleMembers: saveRoleMembers, saveSetting: saveSetting, saveExportConfig: saveExportConfig,
     syncExport: syncExport, loadLogs: loadLogs,
     exportExcel: exportExcel, openPrint: openPrint, printDashboard: printDashboard,
-    closePrint: closePrint, downloadWord: downloadWord,
+    closePrint: closePrint, downloadWord: downloadWord, downloadPdf: downloadPdf,
     closeModal: closeModal
   };
 

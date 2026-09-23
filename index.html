@@ -423,11 +423,12 @@
   <div class="print-toolbar">
     <div>
       <strong id="printTitle">ตัวอย่างก่อนพิมพ์</strong>
-      <div class="muted small">เลือกเครื่องพิมพ์เป็น “บันทึกเป็น PDF” เพื่อได้ไฟล์ PDF ที่ใช้งานได้ทันที</div>
+      <div class="muted small">ด้านล่างเป็นตัวอย่างบนหน้าจอ — ไฟล์ PDF ที่ดาวน์โหลดจะจัดหน้าใหม่ให้ตรงกับแบบฟอร์มราชการเสมอ</div>
     </div>
     <div class="row-actions">
-      <button class="btn btn-primary btn-sm" onclick="window.print()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
-      <button class="btn btn-soft btn-sm" onclick="App.downloadWord()">📝 ดาวน์โหลด Word</button>
+      <button id="btnDownloadPdf" class="btn btn-primary btn-sm" onclick="App.downloadPdf()">📄 ดาวน์โหลด PDF</button>
+      <button id="btnDownloadWord" class="btn btn-soft btn-sm" onclick="App.downloadWord()">📝 ดาวน์โหลด Word</button>
+      <button id="btnRawPrint" class="btn btn-ghost btn-sm hidden" onclick="window.print()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
       <button class="btn btn-ghost btn-sm" onclick="App.closePrint()">ปิด</button>
     </div>
   </div>
