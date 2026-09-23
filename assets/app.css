@@ -105,6 +105,9 @@ button, input, select, textarea { font-family: inherit; font-size: 14px; }
 .userbox span { font-size: 12px; color: var(--muted); }
 
 .layout { display: grid; grid-template-columns: 240px 1fr; min-height: calc(100vh - 62px); }
+/* ซ่อนเมนูด้านข้าง: เดิม .content ไม่ได้กำหนด grid-column เอง เมื่อซ่อน .sidebar (display:none)
+   กริดจะจัด .content ไปแทนที่คอลัมน์ 240px แรกแทนที่จะขยายเต็มพื้นที่ จึงต้องบังคับเหลือคอลัมน์เดียว */
+.layout.sidebar-collapsed { grid-template-columns: 1fr; }
 .sidebar {
   background: #fff; border-right: 1px solid var(--line); padding: 14px;
   position: sticky; top: 62px; height: calc(100vh - 62px); overflow: auto;

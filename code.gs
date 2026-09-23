@@ -1039,7 +1039,8 @@ function requestPermissions_(user, request) {
       status === STATUS.IN_PROGRESS || status === STATUS.COMPLETED,
     canAttachApproval: latest && supply && status === STATUS.CHECKED,
     canUnlock: supply && locked,
-    canAddProgress: latest && supply && (status === STATUS.APPROVED ||
+    // เริ่มบันทึกความก้าวหน้าได้ตั้งแต่ "ผ่านการตรวจสอบ" เป็นต้นไป ไม่ต้องรอจนกว่าจะอนุมัติ/ล็อกข้อมูล
+    canAddProgress: latest && supply && (status === STATUS.CHECKED || status === STATUS.APPROVED ||
       status === STATUS.IN_PROGRESS || status === STATUS.COMPLETED),
     canCancel: latest && !locked && (isOwner || supply) && status !== STATUS.CANCELLED,
     isOwner: isOwner,

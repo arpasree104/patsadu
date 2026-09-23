@@ -364,6 +364,7 @@
   }
 
   function applyUserChrome() {
+    applySidebarState();
     var pub = STATE.publicMode || !STATE.user;
     $('currentUserName').textContent = pub ? 'บุคคลทั่วไป' : (STATE.user.fullName || STATE.user.username);
     $('currentUserMeta').textContent = pub ? 'กรุณาเข้าสู่ระบบเพื่อจัดการข้อมูล'
@@ -444,7 +445,31 @@
     if (window.innerWidth <= 960) window.scrollTo(0, 0);
   }
 
-  function toggleSidebar() { $('sidebar').classList.toggle('hidden'); }
+  var SIDEBAR_KEY = 'patsadu_sidebar_collapsed';
+
+  function toggleSidebar() {
+    var collapsed = $('sidebar').classList.toggle('hidden');
+    $('sidebar').closest('.layout').classList.toggle('sidebar-collapsed', collapsed);
+    try { localStorage.setItem(SIDEBAR_KEY, collapsed ? '1' : '0'); } catch (e) { /* ไม่มี localStorage ก็ข้ามไป */ }
+  }
+
+  /** ซ่อน/แสดงแผงตัวกรอง (ซ่อนไว้เป็นค่าเริ่มต้นให้หน้าดูโล่ง กดปุ่มเพื่อแสดงเมื่อต้องการใช้) */
+  function toggleFilterPanel(bodyId, btnId) {
+    var body = $(bodyId);
+    if (!body) return;
+    var nowHidden = body.classList.toggle('hidden');
+    var btn = $(btnId);
+    if (btn) btn.textContent = nowHidden ? '🔍 แสดงตัวกรอง' : '🔼 ซ่อนตัวกรอง';
+  }
+
+  /** จำสถานะซ่อนเมนูด้านข้างไว้ข้ามการโหลดหน้าใหม่ */
+  function applySidebarState() {
+    var collapsed;
+    try { collapsed = localStorage.getItem(SIDEBAR_KEY) === '1'; } catch (e) { collapsed = false; }
+    $('sidebar').classList.toggle('hidden', collapsed);
+    var layout = $('sidebar').closest('.layout');
+    if (layout) layout.classList.toggle('sidebar-collapsed', collapsed);
+  }
 
   function reload() {
     STATE.detailCache = {};
@@ -1168,7 +1193,12 @@
       '<div class="row-actions mt">' +
       (perm.canAddProgress ? '<button class="btn btn-primary btn-sm" id="btnAddProgress">➕ บันทึกความก้าวหน้า</button>' : '') +
       '<button class="btn btn-soft btn-sm" id="btnOpenFromTrack">เปิดรายละเอียดคำขอ</button>' +
-      '</div></div>';
+      '</div>' +
+      // อธิบายเหตุผลเมื่อเจ้าหน้าที่พัสดุยังไม่เห็นปุ่มบันทึกความก้าวหน้า กันความสับสนว่าทำไมปุ่มหาย
+      (perm.isSupply && !perm.canAddProgress
+        ? '<div class="alert alert-info small mt">จะบันทึกความก้าวหน้าได้เมื่อคำขอนี้ "ผ่านการตรวจสอบ" เป็นต้นไป — ตอนนี้คำขออยู่สถานะ "' + esc(r.Status || '') + '"</div>'
+        : '') +
+      '</div>';
 
     html += '<div class="card"><div class="section-title">ไทม์ไลน์การดำเนินการ (' + count(progress.length) + ' รายการ)</div>' +
       (progress.length ? '<div class="timeline">' + progress.map(progressItem).join('') + '</div>'
@@ -1896,7 +1926,7 @@
   window.App = {
     saveEndpoint: saveEndpoint, login: login, logout: logout, showLogin: showLogin,
     viewPublicDashboard: viewPublicDashboard, reload: reload,
-    showPage: showPage, toggleSidebar: toggleSidebar,
+    showPage: showPage, toggleSidebar: toggleSidebar, toggleFilterPanel: toggleFilterPanel,
     applyFilters: applyFilters, clearFilters: clearFilters,
     renderList: renderList, openRequest: openRequest, newRequest: newRequest,
     addItemRow: addItemRow, addInspectorRow: addInspectorRow, syncBudgetType: syncBudgetType,
