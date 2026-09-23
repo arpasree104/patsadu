@@ -421,11 +421,13 @@
 <!-- ตัวอย่างก่อนพิมพ์ -->
 <div id="printModal" class="print-modal hidden">
   <div class="print-toolbar">
-    <strong id="printTitle">ตัวอย่างก่อนพิมพ์</strong>
+    <div>
+      <strong id="printTitle">ตัวอย่างก่อนพิมพ์</strong>
+      <div class="muted small">เลือกเครื่องพิมพ์เป็น “บันทึกเป็น PDF” เพื่อได้ไฟล์ PDF ที่ใช้งานได้ทันที</div>
+    </div>
     <div class="row-actions">
-      <button class="btn btn-primary btn-sm" onclick="window.print()">🖨️ พิมพ์</button>
-      <button class="btn btn-soft btn-sm" onclick="App.downloadPdf()">📄 บันทึก PDF</button>
-      <button class="btn btn-soft btn-sm" onclick="App.downloadWord()">📝 บันทึก Word</button>
+      <button class="btn btn-primary btn-sm" onclick="window.print()">🖨️ พิมพ์ / บันทึกเป็น PDF</button>
+      <button class="btn btn-soft btn-sm" onclick="App.downloadWord()">📝 ดาวน์โหลด Word</button>
       <button class="btn btn-ghost btn-sm" onclick="App.closePrint()">ปิด</button>
     </div>
   </div>

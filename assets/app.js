@@ -60,7 +60,8 @@
   function num(v) { var n = Number(String(v === null || v === undefined ? '' : v).replace(/,/g, '')); return isNaN(n) ? 0 : n; }
   function money(v) { return num(v).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function count(v) { return num(v).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
-  function thNum(s) { return String(s === null || s === undefined ? '' : s).replace(/[0-9]/g, function (d) { return '๐๑๒๓๔๕๖๗๘๙'[d]; }); }
+  // ใช้ในเอกสารที่พิมพ์ จึง escape ก่อนแปลงเป็นเลขไทยเสมอ
+  function thNum(s) { return esc(s).replace(/[0-9]/g, function (d) { return '๐๑๒๓๔๕๖๗๘๙'[d]; }); }
 
   function toISODate(v) {
     if (!v) return '';
@@ -224,6 +225,13 @@
         var session = JSON.parse(saved);
         if (session && session.token) {
           STATE.token = session.token;
+          // แสดงชื่อผู้ใช้ที่จำไว้ทันที ไม่ต้องรอ bootstrap ตอบกลับ
+          if (session.user) {
+            STATE.user = session.user;
+            STATE.publicMode = false;
+            show('appView');
+            applyUserChrome();
+          }
           bootstrap();
           return;
         }
@@ -268,10 +276,23 @@
       { anonymous: true, message: 'กำลังตรวจสอบสิทธิเข้าใช้งาน...', done: 'เข้าสู่ระบบสำเร็จ' })
       .then(function (res) {
         STATE.token = res.token;
-        localStorage.setItem(CFG.SESSION_KEY, JSON.stringify({ token: res.token, userId: res.user.userId }));
-        return bootstrap();
+        STATE.user = res.user;
+        STATE.publicMode = false;
+        localStorage.setItem(CFG.SESSION_KEY, JSON.stringify({ token: res.token, user: res.user }));
+        show('appView');
+        applyUserChrome();
+        // โหลดข้อมูลล้มเหลวไม่ใช่การเข้าสู่ระบบล้มเหลว — คงเซสชันไว้แล้วให้กดโหลดใหม่ได้
+        return bootstrap().catch(function (err) {
+          idle('เข้าสู่ระบบแล้ว แต่โหลดข้อมูลไม่สำเร็จ: ' + err.message, true);
+        });
       })
-      .catch(function (err) { alertBox('loginAlert', err.message, 'danger'); })
+      .catch(function (err) {
+        localStorage.removeItem(CFG.SESSION_KEY);
+        STATE.token = '';
+        STATE.user = null;
+        showLogin();
+        alertBox('loginAlert', err.message, 'danger');
+      })
       .then(function () { $('loginBtn').disabled = false; });
   }
 
@@ -291,6 +312,7 @@
       .then(function (res) {
         STATE.publicMode = false;
         STATE.user = res.user;
+        localStorage.setItem(CFG.SESSION_KEY, JSON.stringify({ token: STATE.token, user: res.user }));
         STATE.users = res.users || [];
         STATE.settings = res.settings || {};
         STATE.meta = res.meta || STATE.meta;
@@ -1332,7 +1354,12 @@
     $('printArea').innerHTML = '';
   }
 
-  function box(v) { return (v == 1 || v === true) ? '☑' : '☐'; }
+  /** ติ๊กเมื่อเป็นจริงหรือมีข้อความ — ช่องอย่าง "อื่นๆ" และ "จัดซื้อด้วยเงิน" เก็บเป็นข้อความ */
+  function box(v) {
+    if (v === true) return '☑';
+    var s = String(v === null || v === undefined ? '' : v).trim().toLowerCase();
+    return (s && s !== '0' && s !== 'false') ? '☑' : '☐';
+  }
 
   /** สร้างเอกสารตามแบบฟอร์มขอความเห็นชอบจัดซื้อจัดจ้าง ของ สสจ.นครนายก */
   function renderMemo(data) {
@@ -1484,12 +1511,12 @@
       '<h1>รายงานสรุปการเสนอความต้องการพัสดุ</h1>' +
       '<div class="center">' + esc(CFG.ORG_NAME) + '</div>' +
       '<div class="center">ข้อมูล ณ วันที่ ' + thNum(thaiDate(todayISO())) + '</div>' +
-      '<div class="kpi-print">' +
-      '<div>คำขอทั้งหมด<b>' + thNum(count(d.total)) + '</b>เรื่อง</div>' +
-      '<div>วงเงินรวม<b>' + thNum(money(d.totalAmount)) + '</b>บาท</div>' +
-      '<div>อนุมัติแล้ว<b>' + thNum(money(d.approvedAmount)) + '</b>บาท</div>' +
-      '<div>แล้วเสร็จ<b>' + thNum(count((d.counters || {}).completed)) + '</b>เรื่อง</div>' +
-      '</div>' +
+      '<table class="print-table kpi-print"><tr>' +
+      '<td>คำขอทั้งหมด<b>' + thNum(count(d.total)) + '</b>เรื่อง</td>' +
+      '<td>วงเงินรวม<b>' + thNum(money(d.totalAmount)) + '</b>บาท</td>' +
+      '<td>อนุมัติแล้ว<b>' + thNum(money(d.approvedAmount)) + '</b>บาท</td>' +
+      '<td>แล้วเสร็จ<b>' + thNum(count((d.counters || {}).completed)) + '</b>เรื่อง</td>' +
+      '</tr></table>' +
       '<div class="bold">๑. ระยะเวลาดำเนินการ (วัน)</div>' +
       '<table class="print-table"><thead><tr><th>ช่วง</th><th>จำนวนเรื่อง</th><th>เฉลี่ย</th><th>เร็วสุด</th><th>ช้าสุด</th></tr></thead><tbody>' +
       durRow('ยื่นคำขอ → ตรวจสอบเสร็จ', dur.submitToCheck) +
@@ -1507,50 +1534,222 @@
       '</div>';
   }
 
-  function downloadPdf() {
-    var page = $('printPage');
-    if (!page) return;
-    busy('กำลังสร้างไฟล์ PDF...');
-    loadScript('https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js')
-      .then(function () {
-        return html2pdf().set({
-          margin: 0,
-          filename: printFileName() + '.pdf',
-          image: { type: 'jpeg', quality: 0.96 },
-          html2canvas: { scale: 2, useCORS: true },
-          jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-        }).from(page).save();
-      })
-      .then(function () { idle('บันทึก PDF เรียบร้อย'); })
-      .catch(function (err) { idle(err.message || 'สร้าง PDF ไม่สำเร็จ', true); });
+  /**
+   * สร้างไฟล์ Word ของแบบขอความเห็นชอบซื้อ/จ้าง
+   * ใช้ตารางล้วน เพราะ Word ไม่รองรับ flex/grid — เปิดแล้วใช้งานต่อได้ทันที
+   */
+  function buildWordMemo(data) {
+    var r = data.request || {};
+    var items = data.items || [];
+    var inspectors = data.inspectors || [];
+
+    var sheets = function (key) { return thNum(count(r['Attachment' + key + 'Sheets'])); };
+    var has = function (key) {
+      return r['Attachment' + key] == 1 || splitLines(r['Attachment' + key + 'FileIds']).length > 0;
+    };
+
+    var itemRows = items.map(function (it, i) {
+      return '<tr>' +
+        '<td class="bd c">' + thNum(i + 1) + '</td>' +
+        '<td class="bd">' + esc(it.ItemName) + '</td>' +
+        '<td class="bd r">' + thNum(money(it.PlanBalanceAmount)) + '</td>' +
+        '<td class="bd r">' + thNum(count(it.Quantity)) + '</td>' +
+        '<td class="bd c">' + esc(it.Unit) + '</td>' +
+        '<td class="bd r">' + thNum(money(it.UnitPrice)) + '</td>' +
+        '<td class="bd r">' + thNum(money(it.TotalPrice)) + '</td>' +
+        '<td class="bd r">' + thNum(money(it.LastPrice)) + '</td></tr>';
+    }).join('');
+    for (var blank = items.length; blank < 3; blank++) {
+      itemRows += '<tr><td class="bd">&nbsp;</td><td class="bd"></td><td class="bd"></td><td class="bd"></td>' +
+        '<td class="bd"></td><td class="bd"></td><td class="bd"></td><td class="bd"></td></tr>';
+    }
+
+    var insRows = [0, 1, 2].map(function (i) {
+      var ins = inspectors[i] || {};
+      return '<table class="t"><tr>' +
+        '<td width="26">' + thNum(i + 1) + '.</td>' +
+        '<td class="u">' + esc(ins.FullName) + '</td>' +
+        '<td width="70">ตำแหน่ง</td>' +
+        '<td class="u" width="200">' + esc(ins.Position) + '</td></tr></table>' +
+        '<table class="t"><tr>' +
+        '<td width="160">หมายเลขบัตรประชาชน</td>' +
+        '<td class="u" width="170">' + thNum(ins.CID || '') + '</td>' +
+        '<td width="130">E-mail address :</td>' +
+        '<td class="u">' + esc(ins.Email) + '</td></tr></table>';
+    }).join('');
+
+    var body =
+      '<table class="t"><tr>' +
+      '<td width="110" valign="top"><img src="' + esc(CFG.GARUDA_URL) + '" height="57" alt=""></td>' +
+      '<td class="title" valign="middle">บันทึกข้อความ</td>' +
+      '<td width="110"></td></tr></table>' +
+
+      '<table class="t"><tr>' +
+      '<td class="lbl" width="115">ส่วนราชการ</td><td class="u">' + esc(r.Department) + '</td>' +
+      '<td class="lbl" width="55">โทร.</td><td class="u" width="150">' + thNum(r.Phone || '') + '</td></tr></table>' +
+      '<table class="t"><tr>' +
+      '<td class="lbl" width="30">ที่</td><td width="30">นย</td><td class="u">' + thNum(r.DocNoText || '') + '</td>' +
+      '<td class="lbl" width="60">วันที่</td><td class="u" width="190">' + thNum(thaiDate(r.RequestDate)) + '</td></tr></table>' +
+      '<table class="t"><tr>' +
+      '<td class="lbl" width="52">เรื่อง</td><td width="185">ขอความเห็นชอบซื้อ/จ้าง</td>' +
+      '<td class="u">' + esc(r.Subject) + '</td></tr></table>' +
+      '<div class="rule"></div>' +
+
+      '<p class="p"><span class="lbl">เรียน</span> &nbsp;' + esc(r.To || 'นายแพทย์สาธารณสุขจังหวัดนครนายก') + '</p>' +
+      '<table class="t"><tr>' +
+      '<td width="90">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;ด้วย</td><td class="u" width="230">' + esc(r.Department) + '</td>' +
+      '<td width="250">มีความประสงค์ขอความเห็นชอบซื้อ/จ้าง</td>' +
+      '<td class="u">' + esc(r.Subject) + '</td></tr></table>' +
+      '<table class="t"><tr>' +
+      '<td width="60">จำนวน</td><td class="u c" width="55">' + thNum(items.length) + '</td>' +
+      '<td width="245">รายการ โดยมีเหตุผลและความจำเป็น</td>' +
+      '<td class="u">' + esc(r.Reason) + '</td></tr></table>' +
+      '<table class="t"><tr>' +
+      '<td width="340">ซึ่ง ' + box(r.PurposeRegular) + ' ใช้ในงานประจำ ' + box(r.PurposeStock) +
+      ' สำรองคลัง ' + box(r.PurposeProject) + ' ใช้ในโครงการ</td>' +
+      '<td class="u">' + esc(r.ProjectName) + '</td></tr></table>' +
+      '<p class="p">(ตามสำเนาที่แนบท้ายมาด้วย) มีรายละเอียดดังนี้</p>' +
+
+      '<table class="t bd-all">' +
+      '<tr>' +
+      '<th class="bd" width="42" rowspan="2">ลำดับ</th>' +
+      '<th class="bd" rowspan="2">รายการ</th>' +
+      '<th class="bd" width="80" rowspan="2">คงเหลือ<br>ยกมาตามแผน<br>(บาท)</th>' +
+      '<th class="bd" colspan="4">ความต้องการซื้อ/จ้างครั้งนี้</th>' +
+      '<th class="bd" width="78" rowspan="2">ราคาซื้อ<br>หลังสุด</th></tr>' +
+      '<tr><th class="bd" width="58">จำนวน</th><th class="bd" width="64">หน่วยนับ</th>' +
+      '<th class="bd" width="78">ราคา/หน่วย</th><th class="bd" width="80">ราคารวม</th></tr>' +
+      itemRows +
+      '<tr><th class="bd r" colspan="6">ราคารวม</th><th class="bd r">' + thNum(money(r.TotalAmount)) +
+      '</th><th class="bd"></th></tr></table>' +
+
+      '<table class="t"><tr>' +
+      '<td width="440">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;พร้อมนี้ได้แนบ ' + box(has('Tor') || has('Spec')) +
+      ' รายละเอียดคุณลักษณะเฉพาะ/ร่างขอบเขตงาน จำนวน</td>' +
+      '<td class="u c" width="45">' + sheets(has('Tor') ? 'Tor' : 'Spec') + '</td>' +
+      '<td width="40">แผ่น</td>' +
+      '<td width="125">' + box(has('Quote')) + ' ใบเสนอราคา จำนวน</td>' +
+      '<td class="u c" width="45">' + sheets('Quote') + '</td><td width="40">แผ่น</td></tr></table>' +
+      '<table class="t"><tr>' +
+      '<td width="230">' + box(has('BudgetPlan')) + ' แผนการใช้งบประมาณ จำนวน</td>' +
+      '<td class="u c" width="45">' + sheets('BudgetPlan') + '</td><td width="40">แผ่น</td>' +
+      '<td width="145">' + box(has('Project')) + ' โครงการ จำนวน</td>' +
+      '<td class="u c" width="45">' + sheets('Project') + '</td><td width="40">แผ่น</td><td></td></tr></table>' +
+      '<p class="p">และขอแต่งตั้งคณะกรรมการตรวจรับพัสดุ/ผู้ตรวจรับพัสดุ ดังนี้</p>' +
+      '<div class="ins">' + insRows + '</div>' +
+
+      '<table class="t"><tr>' +
+      '<td width="49%" valign="top">' +
+      '<p class="p">จึงเรียนมาเพื่อโปรดพิจารณาและเห็นชอบต่อไป</p>' +
+      '<p class="p sp">&nbsp;</p>' +
+      '<p class="p c">ลงชื่อ............................................ผู้ขอใช้</p>' +
+      '<p class="p c">( ' + esc(r.CreatedByName || '...........................................') + ' )</p>' +
+      '<p class="p sp">&nbsp;</p>' +
+      '<p class="p c">ลงชื่อ......................................หัวหน้ากลุ่มงาน</p>' +
+      '<p class="p c">( ' + esc(r.DeptHeadName || '...........................................') + ' )</p>' +
+      '<p class="p sp">&nbsp;</p>' +
+      '<p class="p bold">ความเห็นของงานแผน/กลุ่มงานยุทธศาสตร์ฯ</p>' +
+      '<table class="t"><tr><td width="130">' + box(r.PlanInPlan) + ' ในแผนปี พ.ศ.</td>' +
+      '<td class="u">' + thNum(r.PlanYear || '') + '</td></tr></table>' +
+      '<table class="t"><tr><td width="62">' + box(r.PlanOther) + ' อื่นๆ</td>' +
+      '<td class="u">' + esc(r.PlanOther) + '</td></tr></table>' +
+      '<table class="t"><tr><td width="122">' + box(r.PlanBudgetSource) + ' จัดซื้อด้วยเงิน</td>' +
+      '<td class="u">' + esc(r.PlanBudgetSource) + '</td></tr></table>' +
+      '<table class="t"><tr><td width="90">&nbsp;&nbsp;&nbsp;จำนวนเงิน</td>' +
+      '<td class="u">' + thNum(money(r.PlanAmount || r.TotalAmount)) + '</td><td width="36">บาท</td></tr></table>' +
+      '<p class="p sp">&nbsp;</p>' +
+      '<table class="t"><tr><td class="u"></td><td width="14">/</td><td class="u"></td></tr></table>' +
+      '</td>' +
+
+      '<td width="2%"></td>' +
+      '<td width="49%" valign="top" class="sm">' +
+      '<p class="p c bold"><u>ความเห็นของเจ้าหน้าที่/หัวหน้าเจ้าหน้าที่</u></p>' +
+      '<p class="p">' + box(r.OfficerOpinionAnnualUnder100k) + ' เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี ไม่เกิน ๑ แสนบาท</p>' +
+      '<p class="p">' + box(r.OfficerOpinionAnnualOver100k) + ' เป็นวัสดุสิ้นเปลืองมูลค่าการจัดซื้อทั้งปี เกิน ๑ แสนบาท</p>' +
+      '<p class="p">' + box(r.OfficerMethod === 'เฉพาะเจาะจง') + ' เห็นควรจัดซื้อ/จ้างโดยวิธีเฉพาะเจาะจง</p>' +
+      '<p class="p">' + box(r.OfficerMethod === 'คัดเลือก') + ' เห็นควรจัดซื้อ/จ้างโดยวิธีคัดเลือก</p>' +
+      '<p class="p">' + box(String(r.OfficerMethod || '').indexOf('e-market') > -1) + ' เห็นควรจัดซื้อโดยวิธีตลาดอิเล็กทรอนิกส์ (e-market)</p>' +
+      '<p class="p">' + box(String(r.OfficerMethod || '').indexOf('e-bidding') > -1) + ' เห็นควรจัดซื้อ/จ้างโดยวิธีประกวดราคาอิเล็กทรอนิกส์ (e-bidding)</p>' +
+      '<p class="p">' + box(r.OfficerMethodInProgress) + ' เห็นควรจัดซื้อโดยวิธีเฉพาะเจาะจงก่อน เนื่องจากอยู่ระหว่าง</p>' +
+      '<p class="p">ดำเนินการจัดซื้อ/จ้างโดยวิธี ' + box(r.OfficerInProgressMethod === 'e-market') + ' e-market ' +
+      box(r.OfficerInProgressMethod === 'e-bidding') + ' e-bidding</p>' +
+      '<table class="t"><tr><td width="160">กำหนดแล้วเสร็จประมาณ</td><td class="u c" width="42">' +
+      thNum(count(r.CompletionDays)) + '</td><td>วัน นับถัดจากวันที่ได้รับใบสั่งซื้อ/สั่งจ้าง</td></tr></table>' +
+      '<p class="p">' + esc(r.OfficerReason || 'เนื่องจากมีความจำเป็นต้องใช้ในงานราชการของ สสจ.นครนายก') + '</p>' +
+      '<p class="p sp">&nbsp;</p>' +
+      '<p class="p c">ลงชื่อ.....................................เจ้าหน้าที่</p>' +
+      '<p class="p c">( ' + esc(r.OfficerName || '.......................................') + ' )</p>' +
+      '<p class="p sp">&nbsp;</p>' +
+      '<p class="p c">ลงชื่อ................................หัวหน้าเจ้าหน้าที่</p>' +
+      '<p class="p c">( ' + esc(r.DeptHeadName || '.......................................') + ' )</p>' +
+      '<p class="p c bold">เห็นชอบ</p>' +
+      '<p class="p sp">&nbsp;</p>' +
+      '<p class="p sp">&nbsp;</p>' +
+      '<p class="p c">( ' + esc(r.ApproverName || '.......................................') + ' )</p>' +
+      '<p class="p c">' + esc(r.ApproverPosition || 'นายแพทย์สาธารณสุขจังหวัดนครนายก') + '</p>' +
+      '</td></tr></table>' +
+      ((data.permissions || {}).isOfficialCopy ? ''
+        : '<p class="p c draft">ฉบับร่าง — ยังไม่ผ่านการตรวจสอบของเจ้าหน้าที่พัสดุ</p>');
+
+    return wordWrap(body, 'แบบขอความเห็นชอบซื้อ/จ้าง ' + (r.RequestNo || ''));
   }
 
-  function downloadWord() {
-    var html = $('printArea').innerHTML;
-    if (!html) return;
-    busy('กำลังสร้างไฟล์ Word...');
-    var doc = '<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word">' +
-      '<head><meta charset="utf-8"><style>' +
-      '@page{size:A4 portrait;margin:8.5mm 10.5mm 7mm 10.5mm}' +
-      'body{font-family:"TH Sarabun New","Sarabun",Arial,sans-serif;font-size:15.5pt;line-height:1.10;color:#000}' +
-      '.print-page{width:100%}.garuda-img{height:14mm;width:auto}' +
-      '.memo-title{text-align:center;font-size:26pt;font-weight:bold}' +
-      '.dotline{border-bottom:1px dotted #111;display:inline-block}.memo-row{margin:2px 0}' +
-      '.print-table{width:100%;border-collapse:collapse;font-size:13pt}' +
-      '.print-table th,.print-table td{border:1px solid #000;padding:2px 3px}' +
-      '.center{text-align:center}.right{text-align:right}.bold{font-weight:bold}' +
-      '.sign-table{width:100%}.sign-table td{border:0;vertical-align:top}' +
-      '.sign-center{text-align:center}.print-small{font-size:14pt}' +
-      '.sig-block{min-height:12mm;text-align:center}' +
-      '</style></head><body>' + html + '</body></html>';
-    var blob = new Blob(['﻿', doc], { type: 'application/msword' });
+  /** ห่อเนื้อหาด้วยโครง HTML ที่ Microsoft Word เปิดแล้วได้หน้ากระดาษ A4 ตามระเบียบงานสารบรรณ */
+  function wordWrap(bodyHtml, title) {
+    return '<html xmlns:o="urn:schemas-microsoft-com:office:office" ' +
+      'xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40">' +
+      '<head><meta charset="utf-8"><title>' + esc(title) + '</title>' +
+      '<!--[if gte mso 9]><xml><w:WordDocument><w:View>Print</w:View><w:Zoom>100</w:Zoom>' +
+      '<w:DoNotOptimizeForBrowser/></w:WordDocument></xml><![endif]-->' +
+      '<style>' +
+      '@page Section1 { size: 21.0cm 29.7cm; margin: 1.5cm 1.5cm 1.0cm 2.0cm; mso-page-orientation: portrait; }' +
+      'div.Section1 { page: Section1; }' +
+      'body, td, th, p, div, span { font-family: "TH SarabunPSK", "TH Sarabun New", "Sarabun", Tahoma, sans-serif; font-size: 16pt; color: #000; }' +
+      'body { margin: 0; }' +
+      'p.p { margin: 0 0 2pt 0; line-height: 1.0; }' +
+      'p.sp { font-size: 8pt; margin: 0; }' +
+      'table.t { border-collapse: collapse; width: 100%; margin: 0 0 2pt 0; }' +
+      'table.t > tbody > tr > td, table.t > tbody > tr > th { padding: 0 2pt; vertical-align: bottom; white-space: nowrap; }' +
+      'td.u, th.u { border-bottom: 1pt dotted #000; white-space: normal; }' +
+      'td.bd, th.bd { border: 1pt solid #000; padding: 1pt 3pt; vertical-align: middle; white-space: normal; }' +
+      'th.bd { text-align: center; font-weight: bold; }' +
+      'td.lbl, span.lbl { font-size: 20pt; font-weight: bold; }' +
+      'td.title { font-size: 29pt; font-weight: bold; text-align: center; }' +
+      '.c, .center { text-align: center; } .r, .right { text-align: right; } .bold { font-weight: bold; }' +
+      'p.draft { margin-top: 10pt; color: #b91c1c; font-weight: bold; }' +
+      '.sm, .sm td, .sm p, .sm span { font-size: 14.5pt; }' +
+      'div.rule { border-top: 1pt solid #000; margin: 3pt 0 4pt 0; font-size: 1pt; line-height: 1pt; }' +
+      'div.ins { margin-left: 22pt; }' +
+      'table.print-table { border-collapse: collapse; width: 100%; margin: 4pt 0; }' +
+      'table.print-table td, table.print-table th { border: 1pt solid #000; padding: 1pt 3pt; }' +
+      'table.print-table th { text-align: center; font-weight: bold; }' +
+      '.kpi-print td { text-align: center; } .kpi-print b { display: block; font-size: 20pt; }' +
+      '.exec-report h1 { font-size: 22pt; text-align: center; margin: 0 0 6pt 0; }' +
+      '</style></head><body><div class="Section1">' + bodyHtml + '</div></body></html>';
+  }
+
+  function saveWordFile(html, fileName) {
+    var blob = new Blob(['﻿', html], { type: 'application/msword;charset=utf-8' });
     var url = URL.createObjectURL(blob);
     var a = document.createElement('a');
     a.href = url;
-    a.download = printFileName() + '.doc';
+    a.download = fileName + '.doc';
     document.body.appendChild(a);
     a.click();
-    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); idle('บันทึก Word เรียบร้อย'); }, 800);
+    setTimeout(function () { URL.revokeObjectURL(url); a.remove(); }, 1000);
+  }
+
+  function downloadWord() {
+    busy('กำลังสร้างไฟล์ Word...');
+    try {
+      var html = STATE.printKind === 'request' && STATE.detail
+        ? buildWordMemo(STATE.detail)
+        : wordWrap($('printArea').innerHTML, 'รายงานสรุปการเสนอความต้องการพัสดุ');
+      saveWordFile(html, printFileName());
+      idle('ดาวน์โหลดไฟล์ Word แล้ว — เปิดด้วย Microsoft Word ได้ทันที');
+    } catch (err) {
+      idle(err.message || 'สร้างไฟล์ Word ไม่สำเร็จ', true);
+    }
   }
 
   function printFileName() {
@@ -1578,7 +1777,7 @@
     saveRoleMembers: saveRoleMembers, saveSetting: saveSetting, saveExportConfig: saveExportConfig,
     syncExport: syncExport, loadLogs: loadLogs,
     exportExcel: exportExcel, openPrint: openPrint, printDashboard: printDashboard,
-    closePrint: closePrint, downloadPdf: downloadPdf, downloadWord: downloadWord,
+    closePrint: closePrint, downloadWord: downloadWord,
     closeModal: closeModal
   };
 
