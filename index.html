@@ -96,8 +96,13 @@
         </div>
 
         <div class="card">
-          <div class="section-title">ตัวกรองข้อมูล <button class="btn btn-ghost btn-sm" onclick="App.clearFilters()">ล้างตัวกรอง</button></div>
-          <div class="grid grid-4">
+          <div class="section-title">ตัวกรองข้อมูล
+            <span class="row-actions">
+              <button class="btn btn-ghost btn-sm" onclick="App.clearFilters()">ล้างตัวกรอง</button>
+              <button class="btn btn-soft btn-sm" id="btnToggleDashboardFilter" onclick="App.toggleFilterPanel('dashboardFilterBody', 'btnToggleDashboardFilter')">🔍 แสดงตัวกรอง</button>
+            </span>
+          </div>
+          <div class="grid grid-4 hidden" id="dashboardFilterBody">
             <div class="field"><label>ปีงบประมาณ</label><select id="fltYear" onchange="App.applyFilters()"><option value="">ทุกปี</option></select></div>
             <div class="field"><label>กลุ่มงาน</label><select id="fltDepartment" onchange="App.applyFilters()"><option value="">ทุกกลุ่มงาน</option></select></div>
             <div class="field"><label>ประเภทงบประมาณ</label><select id="fltBudgetType" onchange="App.applyFilters()"><option value="">ทั้งหมด</option></select></div>
@@ -151,7 +156,10 @@
           </div>
         </div>
         <div class="card">
-          <div class="grid grid-3">
+          <div class="section-title">ตัวกรอง / ค้นหา
+            <button class="btn btn-soft btn-sm" id="btnToggleListFilter" onclick="App.toggleFilterPanel('listFilterBody', 'btnToggleListFilter')">🔍 แสดงตัวกรอง</button>
+          </div>
+          <div class="grid grid-3 hidden" id="listFilterBody">
             <div class="field"><label>ค้นหา</label><input id="searchKeyword" type="text" placeholder="เลขที่คำขอ / เรื่อง / ผู้ยื่น / กลุ่มงาน" oninput="App.renderList()"></div>
             <div class="field"><label>สถานะ</label><select id="searchStatus" onchange="App.renderList()"><option value="">ทั้งหมด</option></select></div>
             <div class="field"><label>มุมมอง</label><select id="searchScope" onchange="App.renderList()"><option value="all">ทั้งหมดที่เห็นได้</option><option value="mine">เฉพาะของฉัน</option><option value="todo">ที่ต้องดำเนินการ</option></select></div>
