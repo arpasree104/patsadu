@@ -549,8 +549,22 @@ const HEAVY_USER_COLUMNS = ['SignatureBase64', 'SignatureBase64_2', 'Avatar'];
 /**
  * อ่าน UserAccounts โดยข้ามคอลัมน์รูปภาพขนาดใหญ่ เพื่อให้โหลดเร็ว
  */
+const USER_CACHE_KEY = 'supply_users_v1';
+
 function getAllUsers_() {
   if (cachedTableData_.__users) return cachedTableData_.__users;
+
+  const cache = CacheService.getScriptCache();
+  const cached = cache.get(USER_CACHE_KEY);
+  if (cached) {
+    try {
+      cachedTableData_.__users = JSON.parse(cached);
+      return cachedTableData_.__users;
+    } catch (err) {
+      cache.remove(USER_CACHE_KEY);
+    }
+  }
+
   const sh = getSS_().getSheetByName(CONFIG.USER_SHEET);
   if (!sh || sh.getLastRow() < 2) { cachedTableData_.__users = []; return []; }
 
@@ -584,6 +598,13 @@ function getAllUsers_() {
     });
   });
 
+  try {
+    const text = JSON.stringify(rows);
+    if (text.length < 90000) cache.put(USER_CACHE_KEY, text, 300);
+  } catch (err) {
+    console.log('cache users: ' + err.message);
+  }
+
   cachedTableData_.__users = rows;
   return rows;
 }
@@ -592,17 +613,6 @@ function getUserById_(userId) {
   const id = text_(userId);
   if (!id) return null;
   return getAllUsers_().find(u => text_(u.UserID) === id) || null;
-}
-
-/** อ่านลายเซ็นเฉพาะคนที่ต้องใช้ เพื่อไม่ต้องโหลด base64 ทั้งแผ่น */
-function getUserSignature_(userId) {
-  const user = getUserById_(userId);
-  if (!user) return '';
-  const sh = getSS_().getSheetByName(CONFIG.USER_SHEET);
-  const headers = getHeaders_(sh);
-  const col = headers.indexOf('SignatureBase64') + 1;
-  if (col < 1) return '';
-  return text_(sh.getRange(user._rowNumber, col).getDisplayValue());
 }
 
 function safeUser_(u, roleConfig) {
@@ -945,8 +955,7 @@ function apiGetRequest_(p) {
     inspectors: inspectors,
     versions: versions,
     progress: readProgress_(p.requestId, user),
-    permissions: requestPermissions_(user, request),
-    creatorSignature: getUserSignature_(request.CreatedByUserID)
+    permissions: requestPermissions_(user, request)
   };
 }
 
@@ -976,8 +985,9 @@ function requestPermissions_(user, request) {
       (status === STATUS.DRAFT || status === STATUS.RETURNED),
     canSubmit: latest && !locked && isOwner && (status === STATUS.DRAFT || status === STATUS.RETURNED),
     canReview: latest && supply && status === STATUS.SUBMITTED,
-    canDownload: latest && (status === STATUS.CHECKED || status === STATUS.APPROVED ||
-      status === STATUS.IN_PROGRESS || status === STATUS.COMPLETED),
+    canDownload: status !== STATUS.CANCELLED,
+    isOfficialCopy: status === STATUS.CHECKED || status === STATUS.APPROVED ||
+      status === STATUS.IN_PROGRESS || status === STATUS.COMPLETED,
     canAttachApproval: latest && supply && status === STATUS.CHECKED,
     canUnlock: supply && locked,
     canAddProgress: latest && supply && (status === STATUS.APPROVED ||
