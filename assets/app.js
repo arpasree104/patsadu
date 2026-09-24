@@ -171,6 +171,9 @@
         var json;
         try { json = JSON.parse(raw.text); }
         catch (e) {
+          if (/authoriz|ต้องมีการให้สิทธิ์|ต้องการสิทธิ์/i.test(raw.text)) {
+            throw new Error('Apps Script ยังไม่ได้รับอนุญาตสิทธิ — เจ้าของสคริปต์ต้องเปิดหน้า Apps Script กดรันฟังก์ชันใดก็ได้หนึ่งครั้งแล้วกดอนุญาต จากนั้น Deploy ใหม่');
+          }
           throw new Error('เซิร์ฟเวอร์ตอบกลับไม่ถูกต้อง (HTTP ' + raw.status + ') — ตรวจสอบว่า Deploy Web App โดยตั้ง "ผู้ที่มีสิทธิ์เข้าถึง" เป็น "ทุกคน" แล้ว');
         }
         if (!json.ok) throw new Error(json.error || 'เกิดข้อผิดพลาดที่เซิร์ฟเวอร์');
@@ -179,6 +182,11 @@
         return json;
       })
       .catch(function (err) {
+        // fetch ล้มระดับเครือข่ายได้ข้อความอังกฤษต่างกันตามเบราว์เซอร์ (Chrome: Failed to fetch, Safari: Load failed)
+        if (/^(Failed to fetch|Load failed|NetworkError|Network request failed)/i.test(err.message || '')) {
+          err = new Error('เชื่อมต่อเซิร์ฟเวอร์ Google Apps Script ไม่ได้ — ตรวจสอบอินเทอร์เน็ตแล้วลองใหม่ ' +
+            'ถ้ายังไม่ได้ ให้ผู้ดูแลเปิด ' + STATE.endpoint + '?action=ping ในเบราว์เซอร์เพื่อตรวจสอบการ Deploy');
+        }
         idle(err.message || 'เชื่อมต่อไม่สำเร็จ', true);
         if (/เซสชันหมดอายุ|เข้าสู่ระบบ/.test(err.message || '')) {
           localStorage.removeItem(CFG.SESSION_KEY);
@@ -302,6 +310,15 @@
       { anonymous: true, message: 'กำลังเข้าสู่ระบบ...', done: 'เข้าสู่ระบบสำเร็จ' })
       .then(function (res) {
         STATE.token = res.token;
+        if (res.users === undefined) {
+          // Apps Script ยังรันโค้ดเวอร์ชันเก่า (login ไม่คืนข้อมูลตั้งต้น) — ยังเข้าใช้งานได้ โดยโหลดข้อมูลต่ออีกหนึ่งคำสั่ง
+          STATE.user = res.user;
+          applyUserChrome();
+          console.warn('Apps Script backend is outdated — redeploy code.gs as a New version');
+          return bootstrap().catch(function (err) {
+            idle('เข้าสู่ระบบแล้ว แต่โหลดข้อมูลไม่สำเร็จ: ' + err.message, true);
+          });
+        }
         applyBootstrapResult(res);
       })
       .catch(function (err) {
