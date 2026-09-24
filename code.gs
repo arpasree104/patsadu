@@ -206,7 +206,8 @@ function mark_(label) {
 }
 
 function apiVersion_() {
-  return '2.0.0';
+  // เปลี่ยนทุกครั้งที่แก้โค้ด — เปิด <URL>/exec?action=ping เพื่อเช็คว่า Deploy เวอร์ชันล่าสุดแล้วหรือยัง
+  return '2.1.0';
 }
 
 function jsonOut_(obj, callback) {
