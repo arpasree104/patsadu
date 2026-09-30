@@ -184,7 +184,27 @@ function route_(e, method) {
     const handler = ACTIONS[action];
     if (!handler) throw new Error('ไม่รู้จักคำสั่ง: ' + action);
     clearTableCache_();
-    const result = handler(payload) || {};
+    const writing = /^(setup|login|logout|saveRequest|saveOfficerOpinion|submitRequest|reviewRequest|cancelRequest|attachApproval|setLock|addProgress|deleteProgress|saveSetting|saveSettings|deleteSetting|setRoleMembers)$/.test(action);
+    const lock = writing ? LockService.getScriptLock() : null;
+    let result;
+    if (lock) lock.waitLock(30000);
+    try {
+      result = handler(payload) || {};
+      if (isTrue_(payload.refresh) && /^(saveRequest|saveOfficerOpinion|submitRequest|reviewRequest|cancelRequest|attachApproval|setLock|addProgress|deleteProgress)$/.test(action)) {
+        const id = result.requestId || payload.requestId;
+        try {
+          if (id) result.detail = apiGetRequest_({ token: payload.token, requestId: id });
+          result.requests = apiListRequests_({ token: payload.token, filters: payload.filters || {} }).requests;
+        } catch (refreshError) {
+          result.refreshWarning = 'บันทึกแล้ว แต่โหลดข้อมูลล่าสุดไม่สำเร็จ กรุณากดโหลดข้อมูลใหม่';
+          console.error('refresh after write: ' + refreshError.message);
+        }
+      }
+    } finally {
+      if (lock) {
+        try { SpreadsheetApp.flush(); } finally { lock.releaseLock(); }
+      }
+    }
     if (result.ok === undefined) result.ok = true;
     // เวลาที่ใช้ฝั่งเซิร์ฟเวอร์ แยกตามขั้นตอน — ดูได้ใน Executions ของ Apps Script และหน้าเว็บ (มุมล่างเมนูซ้าย)
     result.serverMs = Date.now() - PERF_T0;
@@ -207,7 +227,7 @@ function mark_(label) {
 
 function apiVersion_() {
   // เปลี่ยนทุกครั้งที่แก้โค้ด — เปิด <URL>/exec?action=ping เพื่อเช็คว่า Deploy เวอร์ชันล่าสุดแล้วหรือยัง
-  return '2.1.0';
+  return '2.2.0';
 }
 
 function jsonOut_(obj, callback) {
@@ -234,6 +254,7 @@ const ACTIONS = {
 
   listRequests: function (p) { return apiListRequests_(p); },
   getRequest: function (p) { return apiGetRequest_(p); },
+  formData: function (p) { requireAuth_(p.token); return { ok: true, users: userDirectory_() }; },
   saveRequest: function (p) { return apiSaveRequest_(p); },
   saveOfficerOpinion: function (p) { return apiSaveOfficerOpinion_(p); },
   submitRequest: function (p) { return apiSubmitRequest_(p); },
@@ -249,6 +270,7 @@ const ACTIONS = {
 
   getSettings: function (p) { return apiGetSettings_(p); },
   saveSetting: function (p) { return apiSaveSetting_(p); },
+  saveSettings: function (p) { return apiSaveSettings_(p); },
   deleteSetting: function (p) { return apiDeleteSetting_(p); },
   setRoleMembers: function (p) { return apiSetRoleMembers_(p); },
 
@@ -333,7 +355,7 @@ function getSS_() {
 }
 
 function clearTableCache_(sheetName) {
-  if (sheetName) delete cachedTableData_[sheetName];
+  if (sheetName) { delete cachedTableData_[sheetName]; delete cachedTableData_['__headers_' + sheetName]; }
   else cachedTableData_ = {};
 }
 
@@ -433,7 +455,9 @@ function migrateLegacyRequests_() {
 
 function getHeaders_(sh) {
   if (!sh || sh.getLastColumn() < 1) return [];
-  return sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+  const key = '__headers_' + sh.getName();
+  if (!cachedTableData_[key]) cachedTableData_[key] = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0].map(String);
+  return cachedTableData_[key];
 }
 
 function getHeaderMap_(headers) {
@@ -526,10 +550,43 @@ function deleteRowsByValue_(sheetName, colName, value) {
   const colIndex = headers.indexOf(colName) + 1;
   if (colIndex < 1) return;
   const values = sh.getRange(2, colIndex, sh.getLastRow() - 1, 1).getValues();
-  for (let i = values.length - 1; i >= 0; i--) {
-    if (String(values[i][0]) === String(value)) sh.deleteRow(i + 2);
-  }
+  deleteRowGroups_(sh, values.map((row, i) => String(row[0]) === String(value) ? i + 2 : 0).filter(Boolean));
   clearTableCache_(sheetName);
+}
+
+function deleteRowGroups_(sh, rowNumbers) {
+  const rows = Array.from(new Set(rowNumbers)).sort((a, b) => a - b);
+  for (let i = rows.length - 1; i >= 0;) {
+    const end = rows[i];
+    let start = end;
+    while (i > 0 && rows[i - 1] === start - 1) start = rows[--i];
+    sh.deleteRows(start, end - start + 1);
+    i--;
+  }
+}
+
+/** Read only matching child rows; large attachment/note cells of other requests stay on Sheets. */
+function getRowsByValue_(sheetName, column, value) {
+  if (cachedTableData_[sheetName]) return cachedTableData_[sheetName].filter(r => text_(r[column]) === text_(value));
+  const sh = getSS_().getSheetByName(sheetName);
+  if (!sh || sh.getLastRow() < 2) return [];
+  const headers = getHeaders_(sh), col = headers.indexOf(column);
+  if (col < 0) throw new Error('ไม่พบคอลัมน์ ' + column + ' ใน ' + sheetName);
+  const ids = sh.getRange(2, col + 1, sh.getLastRow() - 1, 1).getValues();
+  const matched = ids.map((r, i) => text_(r[0]) === text_(value) ? i + 2 : 0).filter(Boolean);
+  const result = [];
+  for (let i = 0; i < matched.length;) {
+    const start = matched[i];
+    let end = start;
+    while (i + 1 < matched.length && matched[i + 1] === end + 1) end = matched[++i];
+    sh.getRange(start, 1, end - start + 1, headers.length).getValues().forEach((row, offset) => {
+      const obj = { _rowNumber: start + offset };
+      headers.forEach((h, c) => obj[h] = normalizeCell_(row[c]));
+      result.push(obj);
+    });
+    i++;
+  }
+  return result;
 }
 
 function makeId_(prefix) {
@@ -580,7 +637,7 @@ function splitLines_(value) {
 const USER_COLUMNS = ['UserID', 'Username', 'FullName', 'Position', 'PositionLevel', 'Department',
   'Role', 'CID', 'Email', 'PhoneNumber', 'Phone', 'IsActive'];
 const USER_CACHE_KEY = 'supply_users_v2';
-const USER_CACHE_SECONDS = 1800;
+const USER_CACHE_SECONDS = 300;
 
 function getAllUsers_() {
   if (cachedTableData_.__users) return cachedTableData_.__users;
@@ -664,10 +721,12 @@ function cachePutLarge_(key, text, seconds) {
   try {
     const n = Math.ceil(text.length / CACHE_CHUNK_CHARS) || 1;
     if (n > 90) { console.log('cachePutLarge_ ' + key + ': too large (' + text.length + ' chars)'); return; }
+    const generation = Utilities.getUuid();
     const parts = {};
-    for (let i = 0; i < n; i++) parts[key + '_' + i] = text.slice(i * CACHE_CHUNK_CHARS, (i + 1) * CACHE_CHUNK_CHARS);
-    parts[key] = String(n);
-    CacheService.getScriptCache().putAll(parts, seconds);
+    for (let i = 0; i < n; i++) parts[key + '_' + generation + '_' + i] = text.slice(i * CACHE_CHUNK_CHARS, (i + 1) * CACHE_CHUNK_CHARS);
+    const cache = CacheService.getScriptCache();
+    cache.putAll(parts, seconds);
+    cache.put(key, JSON.stringify({ n: n, generation: generation }), seconds);
   } catch (err) {
     console.log('cachePutLarge_ ' + key + ': ' + err.message);
   }
@@ -675,14 +734,16 @@ function cachePutLarge_(key, text, seconds) {
 
 function cacheGetLarge_(key) {
   const cache = CacheService.getScriptCache();
-  const n = Number(cache.get(key));
-  if (!n) return null;
+  let meta;
+  try { meta = JSON.parse(cache.get(key) || 'null'); } catch (err) { return null; }
+  if (!meta || !meta.generation || !Number.isInteger(meta.n) || meta.n < 1 || meta.n > 90) return null;
+  const n = meta.n;
   const keys = [];
-  for (let i = 0; i < n; i++) keys.push(key + '_' + i);
+  for (let i = 0; i < n; i++) keys.push(key + '_' + meta.generation + '_' + i);
   const parts = cache.getAll(keys);
   let text = '';
   for (let i = 0; i < n; i++) {
-    const part = parts[key + '_' + i];
+    const part = parts[keys[i]];
     if (part === undefined || part === null) return null; // บางชิ้นหมดอายุก่อน ถือว่าไม่มีแคช
     text += part;
   }
@@ -843,7 +904,7 @@ function apiLogin_(p) {
     ok: true,
     token: token,
     expiresIn: CONFIG.SESSION_HOURS * 3600
-  }, buildBootstrapData_(user, p.filters || {}));
+  }, buildBootstrapData_(user, p.filters || {}, isTrue_(p.compact)));
 }
 
 function apiLogout_(p) {
@@ -905,10 +966,7 @@ function purgeExpiredSessions_(sh) {
   const map = getHeaderMap_(headers);
   const values = sh.getRange(2, 1, sh.getLastRow() - 1, headers.length).getValues();
   const now = new Date();
-  for (let i = values.length - 1; i >= 0; i--) {
-    const exp = toDate_(values[i][map.ExpiresAt]);
-    if (!exp || exp < now) sh.deleteRow(i + 2);
-  }
+  deleteRowGroups_(sh, values.map((row, i) => { const exp = toDate_(row[map.ExpiresAt]); return !exp || exp < now ? i + 2 : 0; }).filter(Boolean));
 }
 
 function requireAuth_(token) {
@@ -926,7 +984,7 @@ function requireAuth_(token) {
     else cache.remove(sessionCacheKey_(token));
   }
   if (!userId) {
-    const session = getTableRows_(CONFIG.SESSION_SHEET).find(r => text_(r.Token) === token);
+    const session = getRowsByValue_(CONFIG.SESSION_SHEET, 'Token', token)[0];
     if (!session) throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
     const exp = toDate_(session.ExpiresAt);
     if (!exp || exp < new Date()) throw new Error('เซสชันหมดอายุ กรุณาเข้าสู่ระบบใหม่');
@@ -979,16 +1037,13 @@ function installWarmupTrigger() {
 function apiBootstrap_(p) {
   const user = requireAuth_(p.token);
   setupSupplySystem();
-  return Object.assign({ ok: true }, buildBootstrapData_(user, p.filters || {}));
+  return Object.assign({ ok: true }, buildBootstrapData_(user, p.filters || {}, isTrue_(p.compact)));
 }
 
 /** ข้อมูลตั้งต้นทั้งหมดหลังเข้าสู่ระบบ ใช้ร่วมกันทั้ง action login และ bootstrap */
-function buildBootstrapData_(user, filters) {
+function buildBootstrapData_(user, filters, compact) {
   const cfg = getRoleConfig_();
-  const users = getAllUsers_()
-    .filter(u => isTrue_(u.IsActive))
-    .map(u => safeUser_(u, cfg))
-    .sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
+  const users = compact ? undefined : userDirectory_();
 
   mark_('users');
   const settings = buildSettings_();
@@ -1000,7 +1055,7 @@ function buildBootstrapData_(user, filters) {
   return {
     user: safeUser_(user, cfg),
     users: users,
-    settings: settings,
+    settings: clientSettings_(user, settings),
     requests: requests.map(summarizeRequest_),
     dashboard: dashboard,
     meta: {
@@ -1041,7 +1096,7 @@ function listRequestRows_(user, filters) {
     const da = toDate_(a.CreatedAt), db = toDate_(b.CreatedAt);
     return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
   });
-  return rows.slice(0, CONFIG.MAX_LIST_ROWS);
+  return rows; // Totals and exports must include every authorized row.
 }
 
 function matchFilters_(r, filters) {
@@ -1115,11 +1170,9 @@ function apiGetRequest_(p) {
   detail.Status = normalizeStatus_(detail.Status);
   detail.Phone = normalizePhone_(detail.Phone || detail.CreatedByPhone);
 
-  const items = getTableRows_(CONFIG.ITEM_SHEET)
-    .filter(r => text_(r.RequestID) === text_(p.requestId))
+  const items = getRowsByValue_(CONFIG.ITEM_SHEET, 'RequestID', p.requestId)
     .sort((a, b) => num_(a.LineNo) - num_(b.LineNo));
-  const inspectors = getTableRows_(CONFIG.INSPECTOR_SHEET)
-    .filter(r => text_(r.RequestID) === text_(p.requestId))
+  const inspectors = getRowsByValue_(CONFIG.INSPECTOR_SHEET, 'RequestID', p.requestId)
     .sort((a, b) => num_(a.Seq) - num_(b.Seq));
 
   const versions = getTableRows_(CONFIG.REQUEST_SHEET)
@@ -1218,13 +1271,7 @@ function apiSaveRequest_(p) {
   const items = sanitizeItems_(payload.items);
   if (!items.length) throw new Error('กรุณาเพิ่มรายการพัสดุอย่างน้อย 1 รายการ');
 
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    return saveRequestInternal_(user, payload, items, isTrue_(p.submit));
-  } finally {
-    lock.releaseLock();
-  }
+  return saveRequestInternal_(user, payload, items, isTrue_(p.submit));
 }
 
 function saveRequestInternal_(user, payload, items, alsoSubmit) {
@@ -1234,8 +1281,13 @@ function saveRequestInternal_(user, payload, items, alsoSubmit) {
   const all = getTableRows_(CONFIG.REQUEST_SHEET);
   const existing = payload.requestId ? all.find(r => text_(r.RequestID) === text_(payload.requestId)) : null;
 
+  if (payload.requestId && !existing) throw new Error('ไม่พบคำขอเดิม กรุณาโหลดข้อมูลใหม่');
   let mode = 'create';
   if (existing) {
+    if (bool01_(existing.IsLatest) !== 1) throw new Error('คำขอนี้ไม่ใช่เวอร์ชันล่าสุด กรุณาเปิดเวอร์ชันล่าสุด');
+    if (payload.expectedUpdatedAt && text_(payload.expectedUpdatedAt) !== text_(existing.UpdatedAt)) {
+      throw new Error('ข้อมูลถูกแก้ไขโดยผู้ใช้อื่น กรุณาโหลดคำขอล่าสุดก่อนบันทึก');
+    }
     const status = normalizeStatus_(existing.Status);
     if (bool01_(existing.IsLocked) === 1) {
       throw new Error('คำขอนี้ถูกล็อกหลังได้รับอนุมัติแล้ว ต้องให้เจ้าหน้าที่พัสดุปลดล็อกก่อนจึงจะแก้ไขได้');
@@ -1250,6 +1302,15 @@ function saveRequestInternal_(user, payload, items, alsoSubmit) {
     else throw new Error('คำขอสถานะ "' + status + '" ไม่สามารถแก้ไขได้');
   }
 
+  if (alsoSubmit) {
+    ATTACHMENT_TYPES.filter(t => t.required).forEach(t => {
+      const input = (payload.attachments || {})[t.key] || {};
+      const removed = (input.removeFileIds || []).map(String);
+      const kept = existing && splitLines_(existing['Attachment' + t.key + 'FileIds']).some(id => removed.indexOf(id) < 0);
+      const added = (input.files || []).some(f => f && f.data);
+      if (!kept && !added) throw new Error('ต้องแนบไฟล์ "' + t.label + '" ก่อนส่งให้เจ้าหน้าที่พัสดุตรวจสอบ');
+    });
+  }
   const profile = safeUser_(user);
   const requestId = mode === 'update' ? existing.RequestID : makeId_('REQ');
   const baseNo = existing ? String(existing.RequestNo).replace(/-v\d+$/, '') : makeRequestNo_();
@@ -1463,10 +1524,7 @@ function apiSaveOfficerOpinion_(p) {
   if (status === STATUS.SUPERSEDED) throw new Error('คำขอนี้ถูกแก้ไขเป็นเวอร์ชันใหม่แล้ว');
 
   const payload = p.payload || {};
-  const lock = LockService.getScriptLock();
-  lock.waitLock(30000);
-  try {
-    updateRequestRow_(requestId, {
+  updateRequestRow_(requestId, {
       OfficerOpinionAnnualUnder100k: bool01_(payload.officerOpinionAnnualUnder100k),
       OfficerOpinionAnnualOver100k: bool01_(payload.officerOpinionAnnualOver100k),
       OfficerMethod: text_(payload.officerMethod) || 'เฉพาะเจาะจง',
@@ -1487,9 +1545,6 @@ function apiSaveOfficerOpinion_(p) {
       PlanRemark: text_(payload.planRemark),
       UpdatedAt: new Date()
     });
-  } finally {
-    lock.releaseLock();
-  }
 
   addLog_(user, 'UPDATE_OFFICER_OPINION', requestId, request.RequestNo);
   return { ok: true, message: 'บันทึกความเห็นเจ้าหน้าที่/งานแผนเรียบร้อยแล้ว' };
@@ -1507,6 +1562,7 @@ function submitRequestInternal_(user, requestId) {
   if (text_(request.CreatedByUserID) !== text_(user.UserID) && !isSupply_(user)) {
     throw new Error('ส่งคำขอได้เฉพาะผู้สร้างคำขอเท่านั้น');
   }
+  if (bool01_(request.IsLatest) !== 1 || isTrue_(request.IsLocked)) throw new Error('คำขอนี้ถูกล็อกหรือไม่ใช่เวอร์ชันล่าสุด');
   const status = normalizeStatus_(request.Status);
   if (status !== STATUS.DRAFT && status !== STATUS.RETURNED) {
     throw new Error('ส่งให้พัสดุตรวจสอบได้เฉพาะคำขอสถานะ "ร่าง" หรือ "ส่งกลับแก้ไข"');
@@ -1541,6 +1597,7 @@ function apiReviewRequest_(p) {
   const user = requireAuth_(p.token);
   requireSupply_(user);
   const request = findRequest_(p.requestId);
+  if (bool01_(request.IsLatest) !== 1 || isTrue_(request.IsLocked)) throw new Error('คำขอนี้ถูกล็อกหรือไม่ใช่เวอร์ชันล่าสุด');
   const status = normalizeStatus_(request.Status);
   if (status !== STATUS.SUBMITTED) {
     throw new Error('ตรวจสอบได้เฉพาะคำขอที่อยู่ในสถานะ "' + STATUS.SUBMITTED + '"');
@@ -1594,7 +1651,7 @@ function apiCancelRequest_(p) {
   if (text_(request.CreatedByUserID) !== text_(user.UserID) && !isSupply_(user)) {
     throw new Error('คุณไม่มีสิทธิยกเลิกคำขอนี้');
   }
-  if (bool01_(request.IsLocked) === 1) throw new Error('คำขอถูกล็อกอยู่ ไม่สามารถยกเลิกได้');
+  if (!requestPermissions_(user, request).canCancel) throw new Error('คำขอนี้ถูกล็อก ยกเลิกแล้ว หรือไม่ใช่เวอร์ชันล่าสุด');
 
   updateRequestRow_(p.requestId, { Status: STATUS.CANCELLED, UpdatedAt: new Date() });
   addLog_(user, 'CANCEL_REQUEST', p.requestId, text_(p.remark));
@@ -1608,6 +1665,7 @@ function apiAttachApproval_(p) {
   const user = requireAuth_(p.token);
   requireSupply_(user);
   const request = findRequest_(p.requestId);
+  if (bool01_(request.IsLatest) !== 1) throw new Error('คำขอนี้ไม่ใช่เวอร์ชันล่าสุด');
   const status = normalizeStatus_(request.Status);
   if (status !== STATUS.CHECKED && status !== STATUS.APPROVED) {
     throw new Error('แนบเอกสารที่ลงนามอนุมัติได้หลังคำขอผ่านการตรวจสอบแล้วเท่านั้น');
@@ -1683,7 +1741,7 @@ function apiAddProgress_(p) {
   if (!stage) throw new Error('กรุณาเลือกขั้นตอนความก้าวหน้า');
 
   const isStageUpdate = getProcurementStages_().indexOf(stage) > -1;
-  if (isStageUpdate && !isSupply_(user)) {
+  if (isStageUpdate && !requestPermissions_(user, request).canAddProgress) {
     throw new Error('เฉพาะเจ้าหน้าที่พัสดุเท่านั้นที่บันทึกความก้าวหน้าการจัดซื้อจัดจ้างได้');
   }
 
@@ -1709,8 +1767,10 @@ function apiAddProgress_(p) {
     if (stage === FINAL_STAGE) {
       fields.Status = STATUS.COMPLETED;
       fields.CompletedAt = progressAt;
-    } else if (status === STATUS.APPROVED) {
-      fields.Status = STATUS.IN_PROGRESS;
+    } else {
+      fields.CompletedAt = '';
+      if (request.ApprovedAt || status === STATUS.APPROVED || status === STATUS.IN_PROGRESS) fields.Status = STATUS.IN_PROGRESS;
+      else fields.Status = STATUS.CHECKED;
     }
     updateRequestRow_(p.requestId, fields);
   }
@@ -1739,9 +1799,24 @@ function apiDeleteProgress_(p) {
   if (text_(row.ProgressByUserID) !== text_(user.UserID) && !isSuperAdmin_(user)) {
     throw new Error('ลบได้เฉพาะรายการที่ตนเองบันทึก หรือผู้ดูแลระบบเท่านั้น');
   }
+  const request = findRequest_(row.RequestID);
+  assertCanView_(user, request);
   deleteRowsByValue_(CONFIG.PROGRESS_SHEET, 'ProgressID', p.progressId);
+  const stages = getProcurementStages_();
+  if (stages.indexOf(text_(row.ProgressStatus)) > -1) {
+    const remaining = getRowsByValue_(CONFIG.PROGRESS_SHEET, 'RequestID', row.RequestID)
+      .filter(r => stages.indexOf(text_(r.ProgressStatus)) > -1)
+      .sort((a, b) => (toDate_(a.ProgressAt) || 0) - (toDate_(b.ProgressAt) || 0));
+    const last = remaining[remaining.length - 1];
+    const completed = last && text_(last.ProgressStatus) === FINAL_STAGE;
+    const fields = { CurrentStage: last ? last.ProgressStatus : '', CurrentStageAt: last ? last.ProgressAt : '', CompletedAt: completed ? last.ProgressAt : '', UpdatedAt: new Date() };
+    if ([STATUS.CHECKED, STATUS.APPROVED, STATUS.IN_PROGRESS, STATUS.COMPLETED].indexOf(normalizeStatus_(request.Status)) > -1) {
+      fields.Status = completed ? STATUS.COMPLETED : (request.ApprovedAt ? (last ? STATUS.IN_PROGRESS : STATUS.APPROVED) : STATUS.CHECKED);
+    }
+    updateRequestRow_(row.RequestID, fields);
+  }
   addLog_(user, 'DELETE_PROGRESS', row.RequestID, text_(row.ProgressStatus));
-  return { ok: true, message: 'ลบรายการความก้าวหน้าแล้ว', progress: readProgress_(row.RequestID, user) };
+  return { ok: true, message: 'ลบรายการความก้าวหน้าแล้ว', requestId: row.RequestID, progress: readProgress_(row.RequestID, user) };
 }
 
 function writeProgress_(user, requestId, data) {
@@ -1782,8 +1857,7 @@ function readProgress_(requestId, viewer) {
   const superAdmin = isSuperAdmin_(viewer);
   const viewerId = text_(viewer.UserID);
 
-  return getTableRows_(CONFIG.PROGRESS_SHEET)
-    .filter(r => text_(r.RequestID) === text_(requestId))
+  return getRowsByValue_(CONFIG.PROGRESS_SHEET, 'RequestID', requestId)
     .map(r => {
       const own = text_(r.ProgressByUserID) === viewerId;
       return {
@@ -1893,9 +1967,10 @@ function uploadFiles_(files, requestNo, category) {
 }
 
 function getAttachmentFolder_() {
+  if (cachedTableData_.__attachmentFolder) return cachedTableData_.__attachmentFolder;
   const folders = DriveApp.getFoldersByName(CONFIG.ATTACHMENT_FOLDER_NAME);
-  if (folders.hasNext()) return folders.next();
-  return DriveApp.createFolder(CONFIG.ATTACHMENT_FOLDER_NAME);
+  cachedTableData_.__attachmentFolder = folders.hasNext() ? folders.next() : DriveApp.createFolder(CONFIG.ATTACHMENT_FOLDER_NAME);
+  return cachedTableData_.__attachmentFolder;
 }
 
 function sanitizeFileName_(name) {
@@ -1906,9 +1981,26 @@ function sanitizeFileName_(name) {
  * Setting
  * ===================================================================*/
 
+function userDirectory_() {
+  return getAllUsers_().filter(u => isTrue_(u.IsActive)).map(u => ({
+    userId: text_(u.UserID), fullName: text_(u.FullName),
+    position: text_(u.Position) + text_(u.PositionLevel), department: text_(u.Department),
+    cid: text_(u.CID), email: text_(u.Email)
+  })).sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
+}
+
+function clientSettings_(user, settings) {
+  if (isSuperAdmin_(user)) return settings;
+  const result = Object.assign({}, settings, { defaults: Object.assign({}, settings.defaults) });
+  ['ExportApiKey', 'ExportSpreadsheetId', 'ExportSheetPrefix', 'NotifyEmail'].forEach(k => delete result.defaults[k]);
+  delete result.raw;
+  delete result.superAdmins;
+  return result;
+}
+
 function apiGetSettings_(p) {
-  requireAuth_(p.token);
-  return { ok: true, settings: buildSettings_() };
+  const user = requireAuth_(p.token);
+  return { ok: true, settings: clientSettings_(user, buildSettings_()) };
 }
 
 function buildSettings_() {
@@ -1970,13 +2062,24 @@ function buildSettingsFromSheet_() {
   };
 }
 
-function apiSaveSetting_(p) {
+function apiSaveSettings_(p) {
+  const user = requireSuperAdmin_(requireAuth_(p.token));
+  const items = p.items;
+  const allowed = ['ExportSpreadsheetId', 'ExportSheetPrefix', 'ExportApiKey', 'NotifyEmail'];
+  if (!Array.isArray(items) || !items.length || items.length > allowed.length || items.some(item => !item || item.category !== 'Default' || allowed.indexOf(text_(item.label)) < 0)) {
+    throw new Error('รายการตั้งค่าการส่งออกไม่ถูกต้อง');
+  }
+  items.forEach(item => apiSaveSetting_({ token: p.token, item: item }, true));
+  return { ok: true, settings: clientSettings_(user, buildSettings_()), message: 'บันทึกการตั้งค่าเรียบร้อย' };
+}
+
+function apiSaveSetting_(p, deferResponse) {
   const user = requireAuth_(p.token);
   requireSuperAdmin_(user);
   const item = p.item || {};
   const category = text_(item.category);
   const label = text_(item.label);
-  const value = text_(item.value) || label;
+  const value = category === 'Default' ? text_(item.value) : (text_(item.value) || label);
   if (!category) throw new Error('กรุณาเลือกประเภทของตัวเลือก');
   if (!label && !value) throw new Error('กรุณากรอกชื่อที่แสดงหรือค่า');
 
@@ -2001,7 +2104,7 @@ function apiSaveSetting_(p) {
 
   invalidateSettingsCache_();
   addLog_(user, 'SAVE_SETTING', '', category + ': ' + record.Label);
-  return { ok: true, message: 'บันทึกตัวเลือกเรียบร้อยแล้ว', settings: buildSettings_() };
+  return { ok: true, message: 'บันทึกตัวเลือกเรียบร้อยแล้ว', settings: deferResponse ? undefined : buildSettings_() };
 }
 
 function apiDeleteSetting_(p) {
@@ -2132,17 +2235,30 @@ function apiDashboard_(p) {
 function apiPublicDashboard_(p) {
   setupSupplySystem();
   const rows = getTableRows_(CONFIG.REQUEST_SHEET)
-    .filter(r => bool01_(r.IsLatest) === 1 || text_(r.IsLatest) === '');
+    .filter(r => (bool01_(r.IsLatest) === 1 || text_(r.IsLatest) === '') && matchFilters_(r, p.filters || {}));
   return {
     ok: true,
-    dashboard: buildDashboard_(rows, {}),
-    requests: rows.slice(0, 300).map(summarizeRequest_)
+    dashboard: buildDashboard_(rows, p.filters || {}),
+    requests: rows.map(summarizeRequest_)
   };
+}
+
+function readProgressMetrics_() {
+  const sh = getSS_().getSheetByName(CONFIG.PROGRESS_SHEET);
+  if (!sh || sh.getLastRow() < 2) return [];
+  const headers = getHeaders_(sh), count = sh.getLastRow() - 1;
+  const rows = Array.from({ length: count }, () => ({}));
+  ['RequestID', 'ProgressStatus', 'ProgressAt'].forEach(key => {
+    const col = headers.indexOf(key);
+    if (col < 0) throw new Error('ไม่พบคอลัมน์ ' + key);
+    sh.getRange(2, col + 1, count, 1).getValues().forEach((r, i) => rows[i][key] = normalizeCell_(r[0]));
+  });
+  return rows;
 }
 
 function buildDashboard_(rows, filters) {
   const stages = getProcurementStages_();
-  const progressRows = getTableRows_(CONFIG.PROGRESS_SHEET);
+  const progressRows = rows.length ? readProgressMetrics_() : [];
   const progressByRequest = {};
   progressRows.forEach(r => {
     const id = text_(r.RequestID);
@@ -2506,19 +2622,24 @@ function addLog_(user, action, requestId, detail) {
 function apiListLogs_(p) {
   const user = requireAuth_(p.token);
   requireSuperAdmin_(user);
-  const limit = Math.min(num_(p.limit) || 300, 2000);
-  const rows = getTableRows_(CONFIG.LOG_SHEET)
-    .filter(r => {
-      if (p.requestId && text_(r.RequestID) !== text_(p.requestId)) return false;
-      if (p.userId && text_(r.UserID) !== text_(p.userId)) return false;
-      if (p.action && text_(r.Action) !== text_(p.action)) return false;
-      return true;
-    })
-    .sort((a, b) => {
-      const da = toDate_(a.Timestamp), db = toDate_(b.Timestamp);
-      return (db ? db.getTime() : 0) - (da ? da.getTime() : 0);
-    })
-    .slice(0, limit)
+  const limit = Math.max(1, Math.min(Math.floor(num_(p.limit)) || 300, 2000));
+  const sh = getSS_().getSheetByName(CONFIG.LOG_SHEET);
+  const headers = getHeaders_(sh);
+  const matches = [];
+  for (let end = sh ? sh.getLastRow() : 1; end >= 2 && matches.length < limit;) {
+    const start = Math.max(2, end - Math.max(limit, 200) + 1);
+    const values = sh.getRange(start, 1, end - start + 1, headers.length).getValues();
+    for (let i = values.length - 1; i >= 0 && matches.length < limit; i--) {
+      const r = {};
+      headers.forEach((h, c) => r[h] = normalizeCell_(values[i][c]));
+      if (p.requestId && text_(r.RequestID) !== text_(p.requestId)) continue;
+      if (p.userId && text_(r.UserID) !== text_(p.userId)) continue;
+      if (p.action && text_(r.Action) !== text_(p.action)) continue;
+      matches.push(r);
+    }
+    end = start - 1;
+  }
+  const rows = matches
     .map(r => ({
       logId: r.LogID,
       timestamp: r.Timestamp,
