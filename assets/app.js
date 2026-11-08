@@ -61,6 +61,38 @@
   function money(v) { return num(v).toLocaleString('th-TH', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function count(v) { return num(v).toLocaleString('th-TH', { maximumFractionDigits: 2 }); }
   // ใช้ในเอกสารที่พิมพ์บนหน้าจอ (HTML) จึง escape ก่อนแปลงเป็นเลขไทยเสมอ
+  /** ชื่อส่วนราชการเต็ม = กลุ่มงาน + สำนักงานสาธารณสุขจังหวัดนครนายก (ไม่ต่อซ้ำถ้ามีอยู่แล้ว) */
+  var ORG_NAME = 'สำนักงานสาธารณสุขจังหวัดนครนายก';
+  function deptFull(d) {
+    d = String(d || '').trim();
+    if (!d) return ORG_NAME;
+    return d.indexOf('สำนักงานสาธารณสุขจังหวัด') > -1 ? d : d + ' ' + ORG_NAME;
+  }
+  /** ขนาดอักษร (หน่วยเดียวกับ availPx) ที่ทำให้ข้อความพอดีหนึ่งบรรทัด ไม่ต่ำกว่า minPx — นับเฉพาะอักขระที่กินความกว้าง */
+  function fitFont(text, availPx, basePx, minPx) {
+    var n = String(text || '').replace(/[ัิ-ฺ็-๎​]/g, '').length || 1;
+    var fs = Math.floor((availPx / (n * 0.5)) * 10) / 10;
+    return Math.max(minPx, Math.min(basePx, fs));
+  }
+  /** ปกปิดเลขบัตรประชาชน: 5 ตัวหน้า + xxxxxxx + ตัวสุดท้าย (ฝั่งเซิร์ฟเวอร์ปกปิดมาแล้ว ฟังก์ชันนี้กันไว้อีกชั้น) */
+  function maskCid(v) {
+    var t = String(v || '').trim();
+    if (!t || /x/i.test(t)) return t;
+    var d = t.replace(/\D/g, '');
+    if (d.length < 7) return d ? d.charAt(0) + 'xxxxx' : '';
+    return d.slice(0, 5) + new Array(d.length - 5).join('x') + d.slice(-1);
+  }
+  /** ใช้เบอร์โทรกลุ่มงานแทนเบอร์เจ้าหน้าที่ (ถ้าผู้ดูแลระบบบันทึกไว้) */
+  function withDeptPhone(r) {
+    var ph = deptPhoneOf(r && r.Department);
+    return ph ? Object.assign({}, r, { Phone: ph }) : r;
+  }
+  function deptPhoneOf(dept) {
+    var list = (STATE.settings && STATE.settings.deptPhones) || [];
+    var f = list.filter(function (x) { return x.department === String(dept || '').trim(); })[0];
+    return f ? f.phone : '';
+  }
+
   function thNum(s) { return esc(s).replace(/[0-9]/g, function (d) { return '๐๑๒๓๔๕๖๗๘๙'[d]; }); }
   // ใช้กับไฟล์ PDF (pdfmake ไม่ใช่ HTML) จึงไม่ escape
   function thNumPlain(s) { return String(s === null || s === undefined ? '' : s).replace(/[0-9]/g, function (d) { return '๐๑๒๓๔๕๖๗๘๙'[d]; }); }
@@ -703,12 +735,16 @@
     var u = STATE.user || {};
     var def = (STATE.settings && STATE.settings.defaults) || {};
 
+    $('department').onchange = function () {
+      var ph = deptPhoneOf($('department').value);
+      if (ph) setVal('phone', ph);
+    };
     $('formTitle').textContent = 'บันทึกคำขอใหม่';
     $('formSubtitle').textContent = 'กรอกข้อมูลตามแบบขอความเห็นชอบซื้อ/จ้าง';
     $('statusPanel').innerHTML = '<div class="muted">คำขอใหม่จะเริ่มจากสถานะ “' + STATUS.DRAFT + '” และส่งให้เจ้าหน้าที่พัสดุตรวจสอบเมื่อพร้อม</div>';
     alertBox('formAlert', '');
 
-    setVal('department', u.department); setVal('phone', u.phone);
+    setVal('department', u.department); setVal('phone', deptPhoneOf(u.department) || u.phone);
     setVal('docNoText', 'นย'); setVal('requestDate', todayISO());
     setVal('to', def['ชื่อผู้รับเรื่อง'] || 'นายแพทย์สาธารณสุขจังหวัดนครนายก');
     setVal('purchaseType', 'ซื้อ'); setVal('subject', ''); setVal('reason', '');
@@ -930,7 +966,7 @@
       '<td class="center rowno"></td>' +
       '<td><input class="ins-name" list="userList" value="' + esc(data.fullName || '') + '"></td>' +
       '<td><input class="ins-position" value="' + esc(data.position || '') + '"></td>' +
-      '<td><input class="ins-cid" value="' + esc(data.cid || '') + '"></td>' +
+      '<td><input class="ins-cid" readonly tabindex="-1" title="ปกปิดเพื่อความปลอดภัย" value="' + esc(maskCid(data.cid)) + '"></td>' +
       '<td><input class="ins-email" value="' + esc(data.email || '') + '"></td>' +
       '<td><input type="hidden" class="ins-userid" value="' + esc(data.userId || '') + '"><button class="btn btn-danger btn-sm" type="button">ลบ</button></td>';
     $('inspectorsTbody').appendChild(tr);
@@ -940,7 +976,7 @@
       var u = STATE.users.filter(function (x) { return x.fullName === name; })[0];
       if (!u) return;
       tr.querySelector('.ins-position').value = u.position || '';
-      tr.querySelector('.ins-cid').value = u.cid || '';
+      tr.querySelector('.ins-cid').value = maskCid(u.cid);
       tr.querySelector('.ins-email').value = u.email || '';
       tr.querySelector('.ins-userid').value = u.userId || '';
     };
@@ -1356,6 +1392,24 @@
       btn.onclick = function () { deleteSetting(btn.getAttribute('data-del-setting')); };
     });
 
+    var depts = {};
+    STATE.users.forEach(function (u) { if (u.department) depts[u.department] = 1; });
+    $('deptPhoneList').innerHTML = Object.keys(depts).sort().map(function (d) { return '<option value="' + esc(d) + '">'; }).join('');
+    $('deptPhoneTbody').innerHTML = (s.deptPhones || []).map(function (d) {
+      return '<tr><td>' + esc(d.department) + '</td><td>' + esc(d.phone) + '</td>' +
+        '<td><button class="btn btn-soft btn-sm" data-edit-dp="' + esc(d.settingId) + '">แก้ไข</button> ' +
+        '<button class="btn btn-danger btn-sm" data-del-setting="' + esc(d.settingId) + '">ลบ</button></td></tr>';
+    }).join('') || '<tr><td colspan="3" class="center muted">ยังไม่มีเบอร์โทรกลุ่มงาน</td></tr>';
+    Array.prototype.forEach.call($('deptPhoneTbody').querySelectorAll('[data-del-setting]'), function (btn) {
+      btn.onclick = function () { deleteSetting(btn.getAttribute('data-del-setting')); };
+    });
+    Array.prototype.forEach.call($('deptPhoneTbody').querySelectorAll('[data-edit-dp]'), function (btn) {
+      btn.onclick = function () {
+        var d = (s.deptPhones || []).filter(function (x) { return x.settingId === btn.getAttribute('data-edit-dp'); })[0];
+        if (d) { $('deptPhoneName').value = d.department; $('deptPhoneValue').value = d.phone; }
+      };
+    });
+
     var def = s.defaults || {};
     $('cfgExportId').value = def.ExportSpreadsheetId || '';
     $('cfgExportPrefix').value = def.ExportSheetPrefix || 'Supply_';
@@ -1398,6 +1452,20 @@
         STATE.settings = res.settings;
         $('setLabel').value = ''; $('setValue').value = '';
         renderSettings(); fillStaticOptions();
+      });
+  }
+
+  function saveDeptPhone() {
+    var dept = $('deptPhoneName').value.trim(), phone = $('deptPhoneValue').value.trim();
+    if (!dept || !phone) { alert('กรุณากรอกชื่อกลุ่มงานและเบอร์โทร'); return; }
+    var found = ((STATE.settings || {}).deptPhones || []).filter(function (d) { return d.department === dept; })[0];
+    var item = { category: 'DeptPhone', label: dept, value: phone };
+    if (found) item.settingId = found.settingId;
+    api('saveSetting', { item: item }, { message: 'กำลังบันทึกเบอร์โทรกลุ่มงาน...', done: 'บันทึกเบอร์โทรกลุ่มงานแล้ว' })
+      .then(function (res) {
+        STATE.settings = res.settings;
+        $('deptPhoneName').value = ''; $('deptPhoneValue').value = '';
+        renderSettings();
       });
   }
 
@@ -1499,7 +1567,7 @@
 
   /** สร้างเอกสารตามแบบฟอร์มขอความเห็นชอบจัดซื้อจัดจ้าง ของ สสจ.นครนายก */
   function renderMemo(data) {
-    var r = data.request || {};
+    var r = withDeptPhone(data.request || {});
     var items = data.items || [];
     var inspectors = data.inspectors || [];
     var official = (data.permissions || {}).isOfficialCopy;
@@ -1522,8 +1590,7 @@
       var ins = inspectors[i] || {};
       return '<div class="frow"><span>' + thNum(i + 1) + '.</span><span class="fill">' + esc(ins.FullName) +
         '</span><span>ตำแหน่ง</span><span class="fill">' + esc(ins.Position) + '</span></div>' +
-        '<div class="frow"><span>หมายเลขบัตรประชาชน</span><span class="fill">' + thNum(ins.CID || '') +
-        '</span><span>E-mail address :</span><span class="fill">' + esc(ins.Email) + '</span></div>';
+        '<div class="frow"><span>E-mail address :</span><span class="fill">' + esc(ins.Email) + '</span></div>';
     }).join('');
 
     // ช่องแนบเอกสารตามแบบฟอร์ม (TOR/Spec รวมเป็นช่องเดียว) และเอกสารตามระเบียบใหม่ในบรรทัดถัดมา
@@ -1537,7 +1604,7 @@
       '<div class="garuda-wrap"><img class="garuda-img" src="' + esc(CFG.GARUDA_URL) + '" alt=""></div>' +
       '<div class="memo-title">บันทึกข้อความ</div><div></div></div>' +
 
-      '<div class="frow"><span class="bold">ส่วนราชการ</span><span class="fill">' + esc(r.Department) +
+      '<div class="frow"><span class="bold">ส่วนราชการ</span><span class="fill" style="font-size:' + fitFont(deptFull(r.Department), 290, 20, 12) + 'pt">' + esc(deptFull(r.Department)) +
       '</span><span class="bold">โทร.</span><span class="fill w-md">' + thNum(r.Phone || '') + '</span></div>' +
       '<div class="frow"><span class="bold">ที่</span><span>นย</span><span class="fill">' +
       thNum(String(r.DocNoText || '').trim().replace(/^นย\s*/, '')) + '</span><span class="bold">วันที่</span><span class="fill w-md">' +
@@ -1675,7 +1742,7 @@
    * ใช้ตารางล้วน เพราะ Word ไม่รองรับ flex/grid — เปิดแล้วใช้งานต่อได้ทันที
    */
   function buildWordMemo(data) {
-    var r = data.request || {};
+    var r = withDeptPhone(data.request || {});
     var items = data.items || [];
     var inspectors = data.inspectors || [];
 
@@ -1705,8 +1772,8 @@
       var ins = inspectors[i] || {};
       return '<p class="p ins-line">' + thNum(i + 1) + '. <span class="u2">' + esc(ins.FullName || '') + '</span>' +
         '&nbsp;&nbsp;ตำแหน่ง <span class="u2">' + esc(ins.Position || '') + '</span></p>' +
-        '<p class="p ins-line ins-sub">หมายเลขบัตรประชาชน <span class="u2">' + thNum(ins.CID || '') + '</span>' +
-        '&nbsp;&nbsp;E-mail address : <span class="u2">' + esc(ins.Email || '') + '</span></p>';
+        '<p class="p ins-line ins-sub">' +
+        'E-mail address : <span class="u2">' + esc(ins.Email || '') + '</span></p>';
     }).join('');
 
     var body =
@@ -1717,7 +1784,7 @@
       '</tr></table>' +
 
       '<table class="t"><tr>' +
-      '<td class="lbl" width="115">ส่วนราชการ</td><td class="u">' + esc(r.Department) + '</td>' +
+      '<td class="lbl" width="115">ส่วนราชการ</td><td class="u" style="font-size:' + fitFont(deptFull(r.Department), 250, 20, 11) + 'pt">' + esc(deptFull(r.Department)) + '</td>' +
       '<td class="lbl" width="55">โทร.</td><td class="u" width="150">' + thNum(r.Phone || '') + '</td></tr></table>' +
       '<table class="t"><tr>' +
       '<td class="lbl" width="30">ที่</td><td width="30">นย</td><td class="u">' +
@@ -1950,8 +2017,9 @@
           .catch(function () { return null; }); // ไม่มีตราครุฑก็ยังสร้าง PDF ต่อได้
       })
       .then(function (garudaDataUrl) {
-        var fmt = { thNum: thNumPlain, money: money, count: count, thaiDate: thaiDate };
-        var dd = window.PatsaduPdf.buildMemoDoc(STATE.detail, fmt, garudaDataUrl);
+        var fmt = { thNum: thNumPlain, money: money, count: count, thaiDate: thaiDate, deptFull: deptFull, fitFont: fitFont };
+        var detail = Object.assign({}, STATE.detail, { request: withDeptPhone(STATE.detail.request) });
+        var dd = window.PatsaduPdf.buildMemoDoc(detail, fmt, garudaDataUrl);
         window.pdfMake.createPdf(dd).download(printFileName() + '.pdf');
         idle('ดาวน์โหลดไฟล์ PDF เรียบร้อย');
       })
@@ -1976,7 +2044,7 @@
     toggleLock: toggleLock, cancelRequest: cancelRequest,
     openTrack: openTrack, openTrackFromForm: openTrackFromForm, loadTrack: loadTrack,
     fillTrackSelect: fillTrackSelect, saveProgress: saveProgress, deleteProgress: deleteProgress,
-    saveRoleMembers: saveRoleMembers, saveSetting: saveSetting, saveExportConfig: saveExportConfig,
+    saveRoleMembers: saveRoleMembers, saveSetting: saveSetting, saveDeptPhone: saveDeptPhone, saveExportConfig: saveExportConfig,
     syncExport: syncExport, loadLogs: loadLogs,
     exportExcel: exportExcel, openPrint: openPrint, printDashboard: printDashboard,
     closePrint: closePrint, downloadWord: downloadWord, downloadPdf: downloadPdf,

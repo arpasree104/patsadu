@@ -166,6 +166,8 @@
     var inspectors = (data && data.inspectors) || [];
     var official = ((data && data.permissions) || {}).isOfficialCopy;
 
+    var deptFull = fmt.deptFull || function (d) { return d; };
+    var fitFont = fmt.fitFont || function () { return 16; };
     var thNum = fmt.thNum, money = fmt.money, count = fmt.count, thaiDate = fmt.thaiDate;
     var SM = 11.5; // ขนาดตัวอักษรคอลัมน์ความเห็นเจ้าหน้าที่
     var IF = 11.5; // ขนาดตัวอักษรรายชื่อกรรมการตรวจรับ
@@ -231,9 +233,7 @@
       });
       inspectorRows.push({
         text: [
-          { text: 'หมายเลขบัตรประชาชน ' },
-          fillRun(thNum(ins.CID || '')),
-          { text: '   E-mail address : ' },
+          { text: 'E-mail address : ' },
           fillRun(ins.Email)
         ],
         fontSize: IF,
@@ -331,7 +331,8 @@
         ],
         margin: [0, 0, 0, 3]
       },
-      row([label('ส่วนราชการ'), uline(r.Department, '*'), label('โทร.'), uline(thNum(r.Phone || ''), 92, { noWrap: true })]),
+      // ชื่อกลุ่มงาน + สำนักงานสาธารณสุขจังหวัดนครนายก ต้องอยู่บรรทัดเดียว จึงย่อขนาดอักษรตามความยาว
+      row([label('ส่วนราชการ'), uline(deptFull(r.Department), '*', { noWrap: true, fontSize: fitFont(deptFull(r.Department), 290, 16, 10) }), label('โทร.'), uline(thNum(r.Phone || ''), 92, { noWrap: true })]),
       row([label('ที่'), plain('นย'), uline(thNum(docNo), '*', { noWrap: true }), label('วันที่'), uline(thNum(thaiDate(r.RequestDate)), 126, { noWrap: true })]),
       row([label('เรื่อง'), plain('ขอความเห็นชอบซื้อ/จ้าง'), uline(r.Subject, '*')], 0),
       {

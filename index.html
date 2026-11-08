@@ -238,7 +238,7 @@
           <div class="section-title">4) คณะกรรมการตรวจรับพัสดุ / ผู้ตรวจรับพัสดุ <button class="btn btn-soft btn-sm" onclick="App.addInspectorRow()">+ เพิ่มรายชื่อ</button></div>
           <datalist id="userList"></datalist>
           <div class="table-wrap">
-            <table><thead><tr><th style="width:44px">ลำดับ</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>เลขบัตรประชาชน</th><th>E-mail</th><th></th></tr></thead><tbody id="inspectorsTbody"></tbody></table>
+            <table><thead><tr><th style="width:44px">ลำดับ</th><th>ชื่อ-สกุล</th><th>ตำแหน่ง</th><th>เลขบัตรประชาชน (ปกปิด)</th><th>E-mail</th><th></th></tr></thead><tbody id="inspectorsTbody"></tbody></table>
           </div>
         </div>
 
@@ -331,6 +331,19 @@
           <div class="muted small">กด Ctrl (หรือ Cmd) ค้างไว้เพื่อเลือกหลายรายชื่อ</div>
           <div class="row-actions mt">
             <button class="btn btn-primary" onclick="App.saveRoleMembers()">บันทึกรายชื่อผู้มีสิทธิ</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="section-title">เบอร์โทรกลุ่มงาน</div>
+          <div class="alert alert-info small">เบอร์โทรที่บันทึกไว้จะแสดงในบันทึกข้อความและเติมในแบบฟอร์มอัตโนมัติ แทนเบอร์โทรของเจ้าหน้าที่ — หากกลุ่มงานใดยังไม่ได้บันทึก ระบบจะใช้เบอร์ของเจ้าหน้าที่แทน</div>
+          <div class="grid grid-3">
+            <div class="field"><label>กลุ่มงาน</label><input id="deptPhoneName" type="text" list="deptPhoneList" placeholder="เลือกหรือพิมพ์ชื่อกลุ่มงาน"><datalist id="deptPhoneList"></datalist></div>
+            <div class="field"><label>เบอร์โทร</label><input id="deptPhoneValue" type="text" inputmode="tel" placeholder="เช่น 037-381290 ต่อ 308"></div>
+            <div class="field"><label>&nbsp;</label><button class="btn btn-primary btn-block" onclick="App.saveDeptPhone()">บันทึกเบอร์โทร</button></div>
+          </div>
+          <div class="table-wrap mt">
+            <table><thead><tr><th>กลุ่มงาน</th><th>เบอร์โทร</th><th></th></tr></thead><tbody id="deptPhoneTbody"></tbody></table>
           </div>
         </div>
 

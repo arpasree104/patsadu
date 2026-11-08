@@ -618,6 +618,15 @@ function normalizePhone_(value) {
   return s;
 }
 
+/** ปกปิดเลขบัตรประชาชน: แสดง 5 ตัวหน้า + xxxxxxx (7 หลัก) + ตัวสุดท้าย เช่น 51006xxxxxxx4 (ไม่ส่งเลขเต็มไปยังหน้าเว็บ) */
+function maskCid_(value) {
+  const s = text_(value);
+  if (!s || /x/i.test(s)) return s;
+  const d = s.replace(/\D/g, '');
+  if (d.length < 7) return d ? d.charAt(0) + 'xxxxx' : '';
+  return d.slice(0, 5) + new Array(d.length - 5).join('x') + d.slice(-1);
+}
+
 function joinNonEmpty_(arr) {
   return arr.map(v => text_(v)).filter(Boolean).join('\n');
 }
@@ -764,7 +773,7 @@ function safeUser_(u, roleConfig) {
     position: [text_(u.Position), text_(u.PositionLevel)].filter(Boolean).join(''),
     department: text_(u.Department),
     role: text_(u.Role),
-    cid: text_(u.CID),
+    cid: maskCid_(u.CID),
     email: text_(u.Email),
     phone: normalizePhone_(u.PhoneNumber || u.Phone || ''),
     isSupply: cfg.supplyIds.indexOf(userId) > -1,
@@ -1173,7 +1182,8 @@ function apiGetRequest_(p) {
   const items = getRowsByValue_(CONFIG.ITEM_SHEET, 'RequestID', p.requestId)
     .sort((a, b) => num_(a.LineNo) - num_(b.LineNo));
   const inspectors = getRowsByValue_(CONFIG.INSPECTOR_SHEET, 'RequestID', p.requestId)
-    .sort((a, b) => num_(a.Seq) - num_(b.Seq));
+    .sort((a, b) => num_(a.Seq) - num_(b.Seq))
+    .map(ins => Object.assign({}, ins, { CID: maskCid_(ins.CID) }));
 
   const versions = getTableRows_(CONFIG.REQUEST_SHEET)
     .filter(r => text_(r.RootRequestID) === text_(request.RootRequestID || request.RequestID))
@@ -1338,7 +1348,7 @@ function saveRequestInternal_(user, payload, items, alsoSubmit) {
     CreatedByPhone: normalizePhone_(existing ? existing.CreatedByPhone : profile.phone),
     CreatedByEmail: existing ? existing.CreatedByEmail : profile.email,
     Department: text_(payload.department) || profile.department,
-    Phone: normalizePhone_(payload.phone || profile.phone),
+    Phone: normalizePhone_(payload.phone || deptPhone_(text_(payload.department) || profile.department) || profile.phone),
     DocNoText: text_(payload.docNoText) || 'นย',
     RequestDate: requestDate,
     Subject: text_(payload.subject),
@@ -1476,7 +1486,7 @@ function sanitizeInspectors_(inspectors) {
     .map(ins => ({
       FullName: text_(ins.fullName),
       Position: text_(ins.position),
-      CID: text_(ins.cid),
+      CID: maskCid_(ins.cid),
       Email: text_(ins.email),
       UserID: text_(ins.userId)
     }));
@@ -1985,8 +1995,16 @@ function userDirectory_() {
   return getAllUsers_().filter(u => isTrue_(u.IsActive)).map(u => ({
     userId: text_(u.UserID), fullName: text_(u.FullName),
     position: text_(u.Position) + text_(u.PositionLevel), department: text_(u.Department),
-    cid: text_(u.CID), email: text_(u.Email)
+    cid: maskCid_(u.CID), email: text_(u.Email)
   })).sort((a, b) => a.fullName.localeCompare(b.fullName, 'th'));
+}
+
+/** เบอร์โทรของกลุ่มงาน (ตั้งค่าโดยผู้ดูแลระบบ) ใช้แสดงในบันทึกข้อความแทนเบอร์ของเจ้าหน้าที่ */
+function deptPhone_(department) {
+  const name = text_(department);
+  if (!name) return '';
+  const found = (buildSettings_().deptPhones || []).filter(d => d.department === name)[0];
+  return found ? found.phone : '';
 }
 
 function clientSettings_(user, settings) {
@@ -2054,6 +2072,9 @@ function buildSettingsFromSheet_() {
     budgetSourceTypes: rows
       .filter(r => text_(r.Category) === 'BudgetSourceType')
       .map(r => ({ source: text_(r.Label), budgetType: text_(r.Value) })),
+    deptPhones: rows
+      .filter(r => text_(r.Category) === 'DeptPhone' && text_(r.Label))
+      .map(r => ({ department: text_(r.Label), phone: normalizePhone_(r.Value), settingId: text_(r.SettingID) })),
     stages: getProcurementStages_(),
     supplyOfficers: members(ROLE_CATEGORIES.SUPPLY_OFFICER),
     supplyHeads: members(ROLE_CATEGORIES.SUPPLY_HEAD),
